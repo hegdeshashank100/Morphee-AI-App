@@ -1,0 +1,84 @@
+.manual-body{
+  align-items:center;
+}
+.nav-row{ max-width:1040px; }
+
+.viewer-title{
+  width:100%; max-width:1040px;
+  font-size:26px; font-weight:700; margin:14px 0 18px;
+  color:var(--text); letter-spacing:0.2px;
+}
+
+.viewer-frame{
+  width:100%; max-width:1040px;
+  border:1px solid var(--accent-dim);
+  border-radius:10px;
+  background:var(--panel);
+  display:grid;
+  grid-template-columns: 260px 1fr;
+  overflow:hidden;
+}
+@media (max-width:720px){ .viewer-frame{ grid-template-columns:1fr; } }
+
+.slider-panel{
+  padding:16px;
+  border-right:1px solid var(--line);
+  max-height:640px;
+  overflow-y:auto;
+}
+.panel-header{ margin-bottom:10px; }
+.panel-title{ font-weight:700; font-size:14px; color:var(--text); }
+.panel-sub{ font-weight:400; font-size:10.5px; color:var(--text-dim); display:block; margin-top:2px; }
+
+.slider-group-label{
+  font-size:10.5px; text-transform:uppercase; letter-spacing:1px;
+  color:var(--accent); margin:14px 0 6px; font-weight:600;
+}
+
+.slider-row{
+  display:grid;
+  grid-template-columns: 78px 1fr 42px;
+  align-items:center;
+  gap:8px;
+  margin:7px 0;
+  font-size:11px;
+  color:var(--text-dim);
+}
+.slider-row input[type=range]{
+  width:100%; accent-color:var(--accent);
+}
+.slider-row .val{
+  text-align:right; font-variant-numeric:tabular-nums; color:var(--text);
+}
+
+.btn-row{ display:flex; gap:8px; margin-top:16px; }
+.btn-row button{
+  flex:1;
+  background:transparent;
+  border:1px solid var(--line);
+  color:var(--text);
+  padding:8px 10px;
+  border-radius:6px;
+  font-size:12px;
+  cursor:pointer;
+}
+.btn-row button:hover{ border-color:var(--accent); color:var(--accent); }
+
+.fine-print{
+  margin-top:14px; font-size:10.5px; color:var(--text-dim); line-height:1.5;
+}
+
+.viewer-frame .render-wrap{
+  border:none; border-radius:0;
+  aspect-ratio:auto;
+  min-height:480px;
+}
+.viewer-frame .loading-overlay{ background:rgba(11,13,16,0.9); }
+
+.caption{
+  width:100%; max-width:1040px;
+  text-align:center;
+  color:var(--accent);
+  font-size:13px;
+  margin-top:14px;
+}

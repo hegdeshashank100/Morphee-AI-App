@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Morphee AI — Interactive Model Viewer</title>
+<link rel="stylesheet" href="/src/style.css">
+<link rel="stylesheet" href="/src/manual.css">
+</head>
+<body class="manual-body">
+
+<div class="nav-row">
+  <a href="/index.html" class="nav-link">← Live Camera Mode</a>
+  <a href="/manual.html" class="nav-link active">Manual Slider Mode</a>
+</div>
+
+<h1 class="viewer-title">Interactive Model Viewer</h1>
+
+<div class="viewer-frame">
+  <div class="slider-panel">
+    <div class="panel-header">
+      <span class="panel-title">Morphee Rig <span class="panel-sub">(ARKit 52 · glTF)</span></span>
+    </div>
+
+    <div class="slider-group-label">Expression</div>
+    <div id="expressionSliders"></div>
+
+    <div class="slider-group-label">Jaw &amp; Neck</div>
+    <div id="poseSliders"></div>
+
+    <div class="btn-row">
+      <button id="resetValuesBtn">Reset Values</button>
+      <button id="resetViewBtn">Reset View</button>
+    </div>
+
+    <div class="fine-print" id="rigNote">Loading rig…</div>
+  </div>
+
+  <div class="render-wrap">
+    <canvas id="renderCanvas"></canvas>
+    <div class="loading-overlay" id="loadingOverlay">Loading 3D face rig…</div>
+  </div>
+</div>
+
+<div class="caption">Manual expression &amp; pose control · Morphee AI</div>
+
+<script type="module" src="/src/manual.js"></script>
+</body>
+</html>
