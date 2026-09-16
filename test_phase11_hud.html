@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morphee AI — Phase 11 Multi-Person UI & Stage HUD Verification</title>
+  <link rel="stylesheet" href="/src/style.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 20px;
+      background: #0b0f19;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .hud-test-container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .test-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 20px;
+      padding: 16px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+    }
+    .test-btn {
+      padding: 8px 16px;
+      background: rgba(99, 102, 241, 0.2);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      color: #a5b4fc;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+    }
+    .test-btn:hover {
+      background: rgba(99, 102, 241, 0.4);
+      color: #fff;
+    }
+    .test-btn.active {
+      background: #6366f1;
+      color: #fff;
+      border-color: #818cf8;
+    }
+    .viewport-box {
+      position: relative;
+      width: 100%;
+      height: 600px;
+      background: #020617;
+      border-radius: 16px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+    }
+    .viewport-bg {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 50% 50%, #1e1b4b 0%, #030712 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0.5;
+    }
+    .stage-sim-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .log-panel {
+      margin-top: 20px;
+      padding: 16px;
+      background: #030712;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      font-family: monospace;
+      font-size: 13px;
+      height: 140px;
+      overflow-y: auto;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="hud-test-container">
+    <h2>Morphee AI — Phase 11 Stage HUD Verification & Visual Showcase</h2>
+    <div class="test-controls">
+      <button class="test-btn active" id="btnScenario0">0 People (Idle)</button>
+      <button class="test-btn" id="btnScenario1">1 Person (Auto Compact)</button>
+      <button class="test-btn" id="btnScenario2">2 People (Expanded Deck)</button>
+      <button class="test-btn" id="btnScenario3">3 People (Avatar Pool Exhausted)</button>
+      <button class="test-btn" id="btnScenarioCoasting">Person 2 Occluded (Coasting)</button>
+      <button class="test-btn" id="btnScenarioReacquired">Person 2 Reacquired</button>
+      <button class="test-btn" id="btnScenarioRelease">Person 1 Leaves (Waiting Claim)</button>
+      <button class="test-btn" id="btnScenarioSwapSlots">Slot Inversion [P2, P1] (Continuity)</button>
+      <button class="test-btn" id="btnModeSingle">Mode: Single</button>
+      <button class="test-btn" id="btnModeMulti">Mode: Multi</button>
+      <button class="test-btn" id="btnModeAuto">Mode: Auto</button>
+    </div>
+
+    <div class="viewport-box">
+      <div class="viewport-bg">
+        <span style="font-size: 24px; color: rgba(255,255,255,0.2); font-weight: bold;">3D STAGE & VIDEO VIEWPORT</span>
+      </div>
+      <canvas id="stageOverlayCanvas" class="stage-sim-canvas"></canvas>
+      <div class="stage-hud-overlay" id="stageHudOverlay"></div>
+    </div>
+
+    <div class="log-panel" id="logPanel">Ready for testing.</div>
+  </div>
+
+  <script type="module">
+    import { MultiPersonHUD } from '/src/modules/ui/multiPersonHud.js';
+    import { AvatarAssignmentManager } from '/src/modules/tracking/avatarAssignmentManager.js';
+    import { AvatarRegistry, avatarRegistry } from '/src/modules/library/avatarRegistry.js';
+
+    const overlayEl = document.getElementById('stageHudOverlay');
+    const hud = new MultiPersonHUD(overlayEl);
+    // Use 2 bundled avatars (Hana & Yuki) to demonstrate unique assignment and waiting state
+    const twoAvatarRegistry = new AvatarRegistry();
+    twoAvatarRegistry._avatars.clear();
+    twoAvatarRegistry.register(avatarRegistry.get('avatar_b'));
+    twoAvatarRegistry.register(avatarRegistry.get('avatar_a'));
+    const assignmentManager = new AvatarAssignmentManager({ registry: twoAvatarRegistry });
+    const canvas = document.getElementById('stageOverlayCanvas');
+    const ctx = canvas.getContext('2d');
+    const logEl = document.getElementById('logPanel');
+
+    function log(msg) {
+      logEl.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function resizeCanvas() {
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    let currentMode = 'auto';
+    let currentTracks = [];
+    let fpsVal = 59.8;
+    let tierVal = 'HIGH';
+
+    function renderStageBadges(tracks) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (!tracks || tracks.length === 0) return;
+
+      const cw = canvas.width;
+      const ch = canvas.height;
+
+      tracks.forEach((track, idx) => {
+        // Draw simulated person marker
+        const x = track.normX * cw;
+        const y = track.normY * ch;
+
+        // Bounding circle/box
+        ctx.strokeStyle = track.state === 'COASTING' ? 'rgba(245, 158, 11, 0.6)' : 'rgba(99, 102, 241, 0.8)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(x, y, 40, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Overlay Badge
+        const avatarId = assignmentManager.getAvatarIdForTrack(track.trackId);
+        const avatarName = avatarId ? (avatarRegistry.get(avatarId)?.name || avatarId) : 'WAITING';
+        const label = `Track #${track.trackId} → ${avatarName} [${track.state}]`;
+
+        ctx.font = '600 12px sans-serif';
+        const textWidth = ctx.measureText(label).width;
+        const badgeW = textWidth + 24;
+        const badgeH = 26;
+        const badgeX = x - badgeW / 2;
+        const badgeY = y - 60;
+
+        // Glassmorphic background
+        ctx.fillStyle = track.state === 'COASTING' ? 'rgba(30, 20, 10, 0.85)' : 'rgba(15, 23, 42, 0.85)';
+        ctx.beginPath();
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
+        ctx.fill();
+
+        ctx.strokeStyle = track.state === 'COASTING' ? '#f59e0b' : '#6366f1';
+        ctx.stroke();
+
+        // Text
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillText(label, badgeX + 12, badgeY + 17);
+      });
+    }
+
+    function updateView() {
+      assignmentManager.sync(currentTracks);
+      hud.update(currentTracks, assignmentManager, {
+        trackingMode: currentMode,
+        maxPeople: 4,
+        telemetry: { tier: tierVal, actualFps: fpsVal },
+        bodyTracking: true,
+        handTracking: true
+      });
+      renderStageBadges(currentTracks);
+    }
+
+    // SCENARIO 0: Idle
+    document.getElementById('btnScenario0').onclick = () => {
+      currentTracks = [];
+      assignmentManager.sync([]);
+      updateView();
+      log('Scenario 0: Zero tracked people. Global bar idle, cards hidden.');
+    };
+
+    // SCENARIO 1: 1 Person
+    document.getElementById('btnScenario1').onclick = () => {
+      currentTracks = [
+        { trackId: 1, state: 'TRACKED', normX: 0.5, normY: 0.45, face: { landmarks: [1] }, pose: { landmarks: [1] }, hands: [{}] }
+      ];
+      updateView();
+      log('Scenario 1: 1 Person (Track #1). Auto compact bar rendered.');
+    };
+
+    // SCENARIO 2: 2 People
+    document.getElementById('btnScenario2').onclick = () => {
+      currentTracks = [
+        { trackId: 1, state: 'TRACKED', normX: 0.35, normY: 0.45, face: { landmarks: [1] }, pose: { landmarks: [1] }, hands: [{}] },
+        { trackId: 2, state: 'TRACKED', normX: 0.65, normY: 0.45, face: { landmarks: [1] }, pose: { landmarks: [1] }, hands: [{}, {}] }
+      ];
+      updateView();
+      log('Scenario 2: 2 People (Track #1 → Hana, Track #2 → Yuki). Expanded deck rendered.');
+    };
+
+    // SCENARIO 3: 3 People (Avatar pool exhausted)
+    document.getElementById('btnScenario3').onclick = () => {
+      currentTracks = [
+        { trackId: 1, state: 'TRACKED', normX: 0.25, normY: 0.45, face: { landmarks: [1] }, pose: { landmarks: [1] }, hands: [{}] },
+        { trackId: 2, state: 'TRACKED', normX: 0.50, normY: 0.45, face: { landmarks: [1] }, pose: { landmarks: [1] }, hands: [{}] },
+        { trackId: 3, state: 'TRACKED', normX: 0.75, normY: 0.45, face: { landmarks: [1] }, pose: null, hands: [] }
+      ];
+      updateView();
+      log('Scenario 3: 3 People. Track #3 renders WAITING FOR UNIQUE AVATAR with amber warning card.');
+    };
+
+    // SCENARIO COASTING: Track #2 occluded
+    document.getElementById('btnScenarioCoasting').onclick = () => {
+      if (currentTracks.length >= 2) {
+        currentTracks[1].state = 'COASTING';
+        currentTracks[1].face = null;
+        updateView();
+        log('Scenario: Track #2 COASTING (occluded). Status updates with pulsating badge.');
+      }
+    };
+
+    // SCENARIO REACQUIRED: Track #2 reacquired
+    document.getElementById('btnScenarioReacquired').onclick = () => {
+      if (currentTracks.length >= 2) {
+        currentTracks[1].state = 'REACQUIRED';
+        currentTracks[1].face = { landmarks: [1] };
+        updateView();
+        log('Scenario: Track #2 REACQUIRED. Status updates to cyan reacquired badge.');
+      }
+    };
+
+    // SCENARIO RELEASE: Track #1 leaves, Track #3 claims Hana
+    document.getElementById('btnScenarioRelease').onclick = () => {
+      currentTracks = currentTracks.filter(t => t.trackId !== 1);
+      updateView();
+      log('Scenario: Track #1 leaves. Track #3 automatically claims Hana!');
+    };
+
+    // SCENARIO SWAP: Detection slot inversion [P2, P1]
+    document.getElementById('btnScenarioSwapSlots').onclick = () => {
+      if (currentTracks.length >= 2) {
+        currentTracks = [currentTracks[1], currentTracks[0], ...currentTracks.slice(2)];
+        updateView();
+        log('Scenario: Detection slots reversed. Persistent TrackIDs and Avatars remain constant!');
+      }
+    };
+
+    // MODES
+    document.getElementById('btnModeSingle').onclick = () => {
+      currentMode = 'single';
+      updateView();
+      log('Mode switched to SINGLE.');
+    };
+    document.getElementById('btnModeMulti').onclick = () => {
+      currentMode = 'multi';
+      updateView();
+      log('Mode switched to MULTI.');
+    };
+    document.getElementById('btnModeAuto').onclick = () => {
+      currentMode = 'auto';
+      updateView();
+      log('Mode switched to AUTO.');
+    };
+
+    // Start with 2 People scenario
+    document.getElementById('btnScenario2').click();
+
+    // Expose for automated testing
+    window.__phase11Harness = {
+      setScenario: (name) => {
+        const btn = document.getElementById(name);
+        if (btn) btn.click();
+      },
+      getState: () => ({
+        currentMode,
+        activeTracksCount: currentTracks.length,
+        hud: hud
+      })
+    };
+  </script>
+</body>
+</html>

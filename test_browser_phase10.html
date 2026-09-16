@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Morphee AI — Phase 10 Browser Offline Verification</title>
+  <style>
+    body {
+      background: #08090c;
+      color: #e8ecf1;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 30px;
+      margin: 0;
+    }
+    h1 {
+      font-size: 24px;
+      color: #4fd1c5;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #6b7a8d;
+      margin-bottom: 24px;
+      font-size: 14px;
+    }
+    .summary-card {
+      background: #12151b;
+      border: 1px solid #1e2330;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 24px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 6px 14px;
+      border-radius: 20px;
+      font-weight: 700;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .badge-success {
+      background: rgba(46, 204, 113, 0.2);
+      color: #2ecc71;
+      border: 1px solid #2ecc71;
+    }
+    .badge-error {
+      background: rgba(231, 76, 60, 0.2);
+      color: #e74c3c;
+      border: 1px solid #e74c3c;
+    }
+    .test-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .test-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #181c24;
+      border: 1px solid #2a3040;
+      border-radius: 8px;
+      padding: 12px 18px;
+      font-size: 14px;
+    }
+    .test-status {
+      font-weight: 600;
+      font-size: 12px;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+    .test-pass {
+      background: rgba(46, 204, 113, 0.15);
+      color: #2ecc71;
+    }
+    .test-fail {
+      background: rgba(231, 76, 60, 0.15);
+      color: #e74c3c;
+    }
+    pre {
+      background: #0e1015;
+      padding: 16px;
+      border-radius: 8px;
+      border: 1px solid #1e2330;
+      overflow-x: auto;
+      font-size: 12px;
+      color: #a0aec0;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Morphee AI — Phase 10 Offline Asset Verification</h1>
+  <div class="subtitle">Validating local WASM binaries, MediaPipe task models, and bundled VRM avatar delivery</div>
+
+  <div class="summary-card">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <div>
+        <h3 style="margin: 0 0 6px 0;">Overall Asset Readiness</h3>
+        <span id="summaryText" style="color: #6b7a8d; font-size: 13px;">Probing local asset pipeline…</span>
+      </div>
+      <div>
+        <span id="overallBadge" class="badge badge-success">RUNNING</span>
+      </div>
+    </div>
+  </div>
+
+  <ul class="test-list" id="testList"></ul>
+
+  <pre id="diagnosticsLog">Diagnostics log initializing…</pre>
+
+  <script type="module">
+    import { assetManager, AssetManager } from './src/modules/core/assetManager.js';
+    import { AvatarRegistry } from './src/modules/library/avatarRegistry.js';
+
+    const testList = document.getElementById('testList');
+    const diagnosticsLog = document.getElementById('diagnosticsLog');
+    const overallBadge = document.getElementById('overallBadge');
+    const summaryText = document.getElementById('summaryText');
+
+    const results = [];
+
+    function addResult(name, passed, detail = '') {
+      results.push({ name, passed, detail });
+      const li = document.createElement('li');
+      li.className = 'test-item';
+      li.innerHTML = `
+        <div>
+          <strong>${name}</strong>
+          ${detail ? `<div style="font-size: 12px; color: #6b7a8d; margin-top: 3px;">${detail}</div>` : ''}
+        </div>
+        <span class="test-status ${passed ? 'test-pass' : 'test-fail'}">${passed ? 'PASS' : 'FAIL'}</span>
+      `;
+      testList.appendChild(li);
+    }
+
+    async function runVerification() {
+      const logs = [];
+      function log(msg) {
+        logs.push(`[${new Date().toISOString().substring(11, 19)}] ${msg}`);
+        diagnosticsLog.textContent = logs.join('\n');
+      }
+
+      log('Starting Phase 10 In-Browser Offline Verification…');
+
+      // Test 1: Query assetManager.getStatus()
+      try {
+        const status = await assetManager.getStatus();
+        log('AssetManager status acquired: ' + JSON.stringify(status, null, 2));
+        addResult('1. AssetManager getStatus() introspection', true, `Fully Offline: ${status.isFullyOffline}`);
+        addResult('2. WASM binaries reachability (/wasm)', status.wasm.available, status.wasm.local);
+        addResult('3. Face Landmarker model reachability', status.models.face.available, status.models.face.path);
+        addResult('4. Hand Landmarker model reachability', status.models.hand.available, status.models.hand.path);
+        addResult('5. Pose Landmarker Heavy model reachability', status.models.pose.available, status.models.pose.path);
+        addResult('6. Bundled Avatar Hana (B) reachability', status.avatars.avatar_b.available, status.avatars.avatar_b.path);
+        addResult('7. Bundled Avatar Yuki (A) reachability', status.avatars.avatar_a.available, status.avatars.avatar_a.path);
+      } catch (err) {
+        log('Error getting status: ' + err.message);
+        addResult('1. AssetManager getStatus() introspection', false, err.message);
+      }
+
+      // Test 8: WASM path resolution
+      try {
+        const wasm = await assetManager.getWasmPath();
+        const ok = wasm === '/wasm';
+        log(`Resolved WASM path: ${wasm}`);
+        addResult('8. getWasmPath() resolves to local /wasm', ok, wasm);
+      } catch (err) {
+        addResult('8. getWasmPath() resolves to local /wasm', false, err.message);
+      }
+
+      // Test 9: Model paths resolution
+      try {
+        const face = await assetManager.getModelPath('face');
+        const hand = await assetManager.getModelPath('hand');
+        const pose = await assetManager.getModelPath('pose');
+        const ok = face === '/models/face_landmarker.task' &&
+                   hand === '/models/hand_landmarker.task' &&
+                   pose === '/models/pose_landmarker_heavy.task';
+        log(`Resolved models: face=${face}, hand=${hand}, pose=${pose}`);
+        addResult('9. getModelPath() resolves local .task files', ok, `${face}, ${hand}, ${pose}`);
+      } catch (err) {
+        addResult('9. getModelPath() resolves local .task files', false, err.message);
+      }
+
+      // Test 10: Bundled avatar URLs resolution
+      try {
+        const b = await assetManager.getAvatarUrl('avatar_b');
+        const a = await assetManager.getAvatarUrl('avatar_a');
+        const ok = b === '/avatars/AvatarSample_B.vrm' && a === '/avatars/AvatarSample_A.vrm';
+        log(`Resolved avatars: Hana=${b}, Yuki=${a}`);
+        addResult('10. getAvatarUrl() resolves local bundled .vrm files', ok, `${b}, ${a}`);
+      } catch (err) {
+        addResult('10. getAvatarUrl() resolves local bundled .vrm files', false, err.message);
+      }
+
+      // Test 11: HTTP Range fetch verification (verifying web server serves binary chunks properly)
+      try {
+        const resWasm = await fetch('/wasm/vision_wasm_internal.js', { headers: { Range: 'bytes=0-100' } });
+        const resModel = await fetch('/models/face_landmarker.task', { headers: { Range: 'bytes=0-100' } });
+        const resAvatar = await fetch('/avatars/AvatarSample_B.vrm', { headers: { Range: 'bytes=0-100' } });
+        const ok = (resWasm.ok || resWasm.status === 206) &&
+                   (resModel.ok || resModel.status === 206) &&
+                   (resAvatar.ok || resAvatar.status === 206);
+        log(`HTTP binary byte-range fetches: WASM=${resWasm.status}, Model=${resModel.status}, VRM=${resAvatar.status}`);
+        addResult('11. HTTP server binary byte-range delivery', ok, `WASM:${resWasm.status} Model:${resModel.status} VRM:${resAvatar.status}`);
+      } catch (err) {
+        addResult('11. HTTP server binary byte-range delivery', false, err.message);
+      }
+
+      // Test 12: Dual-resolution fallback verification
+      try {
+        const fallbackAm = new AssetManager({ preferLocal: false });
+        const fallbackWasm = await fallbackAm.getWasmPath();
+        const fallbackFace = await fallbackAm.getModelPath('face');
+        const ok = fallbackWasm.includes('jsdelivr') && fallbackFace.includes('googleapis');
+        log(`Fallback resolution: wasm=${fallbackWasm}, face=${fallbackFace}`);
+        addResult('12. Dual-resolution remote fallback mechanism', ok, `${fallbackWasm}`);
+      } catch (err) {
+        addResult('12. Dual-resolution remote fallback mechanism', false, err.message);
+      }
+
+      // Final summary
+      const allPassed = results.every(r => r.passed);
+      const passedCount = results.filter(r => r.passed).length;
+      if (allPassed) {
+        overallBadge.className = 'badge badge-success';
+        overallBadge.textContent = '100% OFFLINE READY';
+        summaryText.textContent = `All ${passedCount} / ${results.length} asset delivery checks passed. Application is fully offline self-contained!`;
+        log('--- VERIFICATION COMPLETE: ALL TESTS PASSED ---');
+      } else {
+        overallBadge.className = 'badge badge-error';
+        overallBadge.textContent = 'CHECKS FAILED';
+        summaryText.textContent = `${passedCount} / ${results.length} checks passed. Some assets failed.`;
+        log('--- VERIFICATION INCOMPLETE: SOME TESTS FAILED ---');
+      }
+
+      window.__phase10Results = { allPassed, passedCount, total: results.length, results };
+    }
+
+    runVerification();
+  </script>
+</body>
+</html>

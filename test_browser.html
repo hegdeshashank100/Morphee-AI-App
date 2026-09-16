@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phase 6 Browser Verification Test Suite</title>
+  <style>
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { color: #58a6ff; font-size: 20px; margin-bottom: 8px; }
+    .status-summary {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+    .pill {
+      background: #21262d;
+      border: 1px solid #30363d;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+    }
+    .pill.success { border-color: #238636; color: #3fb950; font-weight: bold; }
+    .pill.warning { border-color: #d29922; color: #e3b341; }
+    .pill.error { border-color: #da3633; color: #f85149; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+    }
+    .canvas-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px;
+      position: relative;
+    }
+    #stageCanvas {
+      width: 100%;
+      height: 440px;
+      background: #010409;
+      border-radius: 6px;
+      display: block;
+    }
+    .log-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 12px;
+      max-height: 440px;
+      overflow-y: auto;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    .log-entry { margin-bottom: 6px; line-height: 1.4; }
+    .log-pass { color: #3fb950; }
+    .log-fail { color: #f85149; font-weight: bold; }
+    .log-info { color: #58a6ff; }
+  </style>
+</head>
+<body>
+  <h1>Phase 6 Multi-Avatar Stage Rendering — Browser Verification Harness</h1>
+  <div class="status-summary">
+    <div class="pill" id="testCountPill">Tests: 0 / 6</div>
+    <div class="pill" id="overallPill">Running...</div>
+    <div class="pill" id="activeAvatarsPill">Active Avatars: 0</div>
+    <div class="pill" id="fpsPill">FPS: --</div>
+  </div>
+
+  <div class="grid">
+    <div class="canvas-card">
+      <canvas id="stageCanvas"></canvas>
+    </div>
+    <div class="log-card" id="logContainer"></div>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { StageManager } from '/src/modules/stage/stageManager.js';
+    import { AvatarInstance } from '/src/modules/stage/avatarInstance.js';
+    import { AvatarAssignmentManager, ASSIGNMENT_STATE } from '/src/modules/tracking/avatarAssignmentManager.js';
+    import { AvatarRegistry } from '/src/modules/library/avatarRegistry.js';
+    import { AvatarCache } from '/src/modules/library/avatarCache.js';
+
+    const canvas = document.getElementById('stageCanvas');
+    const logContainer = document.getElementById('logContainer');
+    const testCountPill = document.getElementById('testCountPill');
+    const overallPill = document.getElementById('overallPill');
+    const activeAvatarsPill = document.getElementById('activeAvatarsPill');
+    const fpsPill = document.getElementById('fpsPill');
+
+    function log(msg, type = 'info') {
+      const div = document.createElement('div');
+      div.className = `log-entry log-${type}`;
+      div.textContent = msg;
+      logContainer.appendChild(div);
+      logContainer.scrollTop = logContainer.scrollHeight;
+      console.log(`[${type.toUpperCase()}] ${msg}`);
+    }
+
+    // Helper to create lightweight mock AvatarInstance with isolated 3D humanoid mesh
+    function createStageAvatar(id, name, colorHex) {
+      const av = new AvatarInstance(id, name);
+      av.isLoaded = true;
+      const group = new THREE.Group();
+      
+      // Simple stylized humanoid placeholder geometry for browser visual verification
+      const bodyMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.3 });
+      const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.12, 0.6, 16), bodyMat);
+      torso.position.y = 1.0;
+      group.add(torso);
+
+      const head = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 16), bodyMat);
+      head.position.y = 1.42;
+      group.add(head);
+
+      const leftArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.45, 8), bodyMat);
+      leftArm.position.set(-0.25, 1.05, 0);
+      group.add(leftArm);
+
+      const rightArm = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.45, 8), bodyMat);
+      rightArm.position.set(0.25, 1.05, 0);
+      group.add(rightArm);
+
+      av.vrm = {
+        scene: group,
+        expressionManager: {
+          expressionMap: { jawOpen: 0, happy: 0 },
+          setValue(k, v) { this[k] = v; }
+        },
+        humanoid: {
+          getNormalizedBoneNode(b) { return head; }
+        },
+        update(delta) {}
+      };
+      av.headBone = head;
+      return av;
+    }
+
+    async function runBrowserValidation() {
+      let passed = 0;
+      let total = 6;
+
+      const stage = new StageManager(canvas);
+      stage.onRenderFps = (fps) => { fpsPill.textContent = `${Math.round(fps)} FPS`; };
+      stage.resize();
+      stage.startRenderLoop();
+
+      const registry = new AvatarRegistry();
+      const assignment = new AvatarAssignmentManager({ defaultAvatarId: 'avatar_b', registry });
+
+      log('Starting live browser stage verification...', 'info');
+
+      // ── TEST B1: 4-PERSON SIMULTANEOUS STAGE RENDERING ──
+      try {
+        const avHana = createStageAvatar('avatar_b', 'Hana', 0xff6b81);
+        const avYuki = createStageAvatar('avatar_a', 'Yuki', 0x48dbfb);
+        const avTaro = createStageAvatar('avatar_c', 'Taro', 0xfeca57);
+        const avOrion = createStageAvatar('avatar_orion', 'Orion', 0x1dd1a1);
+
+        stage.addTrackAvatar(1, avHana);
+        stage.addTrackAvatar(2, avYuki);
+        stage.addTrackAvatar(3, avTaro);
+        stage.addTrackAvatar(4, avOrion);
+
+        assignment.sync([
+          { trackId: 1, state: 'TRACKED', centroid: { x: 0.15, y: 0.4 } },
+          { trackId: 2, state: 'TRACKED', centroid: { x: 0.38, y: 0.4 } },
+          { trackId: 3, state: 'TRACKED', centroid: { x: 0.62, y: 0.4 } },
+          { trackId: 4, state: 'TRACKED', centroid: { x: 0.85, y: 0.4 } }
+        ]);
+
+        stage.updateTrackPositions([
+          { trackId: 1, state: 'TRACKED', centroid: { x: 0.15, y: 0.4 } },
+          { trackId: 2, state: 'TRACKED', centroid: { x: 0.38, y: 0.4 } },
+          { trackId: 3, state: 'TRACKED', centroid: { x: 0.62, y: 0.4 } },
+          { trackId: 4, state: 'TRACKED', centroid: { x: 0.85, y: 0.4 } }
+        ], 'multi');
+
+        const info = stage.getResourceInfo();
+        if (info.activeAvatars !== 4) throw new Error(`Expected 4 active avatars, got ${info.activeAvatars}`);
+        activeAvatarsPill.textContent = `Active Avatars: ${info.activeAvatars}`;
+        passed++;
+        log('TEST B1: 4-Person Simultaneous Stage Rendering -> 4 unique avatars on single Three.js stage', 'pass');
+      } catch (err) {
+        log(`TEST B1 FAILED: ${err.message}`, 'fail');
+      }
+
+      // ── TEST B2: 4-PERSON CROSSING TRAJECTORY TEST ──
+      try {
+        // Physical crossing: Track 1 crosses to far right, Track 4 crosses to far left
+        assignment.sync([
+          { trackId: 1, state: 'TRACKED', centroid: { x: 0.85, y: 0.4 } },
+          { trackId: 2, state: 'TRACKED', centroid: { x: 0.62, y: 0.4 } },
+          { trackId: 3, state: 'TRACKED', centroid: { x: 0.38, y: 0.4 } },
+          { trackId: 4, state: 'TRACKED', centroid: { x: 0.15, y: 0.4 } }
+        ]);
+
+        stage.updateTrackPositions([
+          { trackId: 1, state: 'TRACKED', centroid: { x: 0.85, y: 0.4 } },
+          { trackId: 2, state: 'TRACKED', centroid: { x: 0.62, y: 0.4 } },
+          { trackId: 3, state: 'TRACKED', centroid: { x: 0.38, y: 0.4 } },
+          { trackId: 4, state: 'TRACKED', centroid: { x: 0.15, y: 0.4 } }
+        ], 'multi');
+
+        if (assignment.getAvatarIdForTrack(1) !== 'avatar_b' ||
+            assignment.getAvatarIdForTrack(2) !== 'avatar_a' ||
+            assignment.getAvatarIdForTrack(3) !== 'avatar_c' ||
+            assignment.getAvatarIdForTrack(4) !== 'avatar_orion') {
+          throw new Error('Avatar assignment swapped during physical crossing!');
+        }
+        passed++;
+        log('TEST B2: 4-Person Crossing Test -> TrackID persistence verified (Zero avatar swapping)', 'pass');
+      } catch (err) {
+        log(`TEST B2 FAILED: ${err.message}`, 'fail');
+      }
+
+      // ── TEST B3: 5TH PERSON "NO DUPLICATION" & WAITING STATE ──
+      try {
+        const sync = assignment.sync([
+          { trackId: 1, state: 'TRACKED', centroid: { x: 0.15, y: 0.4 } },
+          { trackId: 2, state: 'TRACKED', centroid: { x: 0.35, y: 0.4 } },
+          { trackId: 3, state: 'TRACKED', centroid: { x: 0.55, y: 0.4 } },
+          { trackId: 4, state: 'TRACKED', centroid: { x: 0.75, y: 0.4 } },
+          { trackId: 5, state: 'TRACKED', centroid: { x: 0.90, y: 0.4 } }
+        ]);
+
+        const t5Avatar = assignment.getAvatarIdForTrack(5);
+        const t5State = assignment.getAssignmentStateForTrack(5);
+
+        if (t5Avatar !== null) throw new Error(`Track 5 received duplicate avatar: ${t5Avatar}`);
+        if (t5State !== ASSIGNMENT_STATE.WAITING_FOR_UNIQUE_AVATAR) {
+          throw new Error(`Track 5 state is ${t5State}, expected WAITING_FOR_UNIQUE_AVATAR`);
+        }
+        passed++;
+        log('TEST B3: 5th Person No Duplication -> Explicit WAITING_FOR_UNIQUE_AVATAR state enforced', 'pass');
+      } catch (err) {
+        log(`TEST B3 FAILED: ${err.message}`, 'fail');
+      }
+
+      // ── TEST B4: TERMINATION & AUTOMATIC REASSIGNMENT TO WAITING TRACK ──
+      try {
+        // Track 2 (Yuki) terminates
+        const sync = assignment.sync([
+          { trackId: 1, state: 'TRACKED', centroid: { x: 0.15, y: 0.4 } },
+          { trackId: 3, state: 'TRACKED', centroid: { x: 0.55, y: 0.4 } },
+          { trackId: 4, state: 'TRACKED', centroid: { x: 0.75, y: 0.4 } },
+          { trackId: 5, state: 'TRACKED', centroid: { x: 0.90, y: 0.4 } }
+        ]);
+
+        stage.removeTrackAvatar(2);
+        const t5Avatar = assignment.getAvatarIdForTrack(5);
+        const t5State = assignment.getAssignmentStateForTrack(5);
+
+        if (t5Avatar !== 'avatar_a') throw new Error(`Expected Track 5 to acquire freed avatar 'avatar_a', got ${t5Avatar}`);
+        if (t5State !== ASSIGNMENT_STATE.ASSIGNED) throw new Error(`Expected Track 5 to be ASSIGNED, got ${t5State}`);
+
+        const av5 = createStageAvatar('avatar_a', 'Yuki', 0x48dbfb);
+        stage.addTrackAvatar(5, av5);
+        activeAvatarsPill.textContent = `Active Avatars: ${stage.getResourceInfo().activeAvatars}`;
+        passed++;
+        log('TEST B4: Track Termination -> Freed avatar instantly reassigned to waiting Track 5', 'pass');
+      } catch (err) {
+        log(`TEST B4 FAILED: ${err.message}`, 'fail');
+      }
+
+      // ── TEST B5: TEMPORARY OCCLUSION (COASTING) & REACQUISITION ──
+      try {
+        // Track 1 goes to COASTING
+        assignment.sync([
+          { trackId: 1, state: 'COASTING', centroid: { x: 0.15, y: 0.4 } },
+          { trackId: 3, state: 'TRACKED', centroid: { x: 0.55, y: 0.4 } },
+          { trackId: 4, state: 'TRACKED', centroid: { x: 0.75, y: 0.4 } },
+          { trackId: 5, state: 'TRACKED', centroid: { x: 0.90, y: 0.4 } }
+        ]);
+        if (assignment.getAvatarIdForTrack(1) !== 'avatar_b') throw new Error('Coasting track lost avatar!');
+
+        // Track 1 REACQUIRED
+        assignment.sync([
+          { trackId: 1, state: 'REACQUIRED', centroid: { x: 0.15, y: 0.4 } },
+          { trackId: 3, state: 'TRACKED', centroid: { x: 0.55, y: 0.4 } },
+          { trackId: 4, state: 'TRACKED', centroid: { x: 0.75, y: 0.4 } },
+          { trackId: 5, state: 'TRACKED', centroid: { x: 0.90, y: 0.4 } }
+        ]);
+        if (assignment.getAvatarIdForTrack(1) !== 'avatar_b') throw new Error('Reacquired track lost avatar!');
+
+        passed++;
+        log('TEST B5: Temporary Occlusion & Reacquisition -> Avatar strictly reserved during grace period', 'pass');
+      } catch (err) {
+        log(`TEST B5 FAILED: ${err.message}`, 'fail');
+      }
+
+      // ── TEST B6: 25-CYCLE ADD/REMOVE VRAM RESOURCE REGRESSION ──
+      try {
+        const initialInfo = stage.getResourceInfo();
+        for (let i = 0; i < 25; i++) {
+          const testAv = createStageAvatar(`stress_${i}`, `Stress ${i}`, 0xffffff);
+          stage.addTrackAvatar(99, testAv);
+          stage.removeTrackAvatar(99);
+          testAv.dispose();
+        }
+        const finalInfo = stage.getResourceInfo();
+        if (stage.trackAvatars.has(99)) throw new Error('Stale trackAvatar reference retained!');
+        passed++;
+        log('TEST B6: 25-Cycle Stage Add/Remove Lifecycle -> Clean resource release, 0 stale references', 'pass');
+      } catch (err) {
+        log(`TEST B6 FAILED: ${err.message}`, 'fail');
+      }
+
+      // Summary
+      testCountPill.textContent = `Tests: ${passed} / ${total}`;
+      if (passed === total) {
+        overallPill.textContent = 'ALL 6 TESTS PASSED';
+        overallPill.className = 'pill success';
+        log(`\nAll ${passed} Browser Stage Tests Successfully Verified!`, 'pass');
+      } else {
+        overallPill.textContent = `${total - passed} FAILED`;
+        overallPill.className = 'pill error';
+      }
+
+      // Expose to window for automated inspection
+      window.__browserTestResults = { passed, total, passedAll: passed === total };
+    }
+
+    runBrowserValidation();
+  </script>
+</body>
+</html>

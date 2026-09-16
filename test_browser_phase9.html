@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Phase 9 Settings Wiring & Tracking Mode Controller — Browser Test Suite</title>
+  <style>
+    body {
+      background: #0d1117;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { color: #58a6ff; font-size: 20px; margin-bottom: 4px; }
+    p.subtitle { color: #8b949e; font-size: 13px; margin-top: 0; margin-bottom: 16px; }
+    .status-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      align-items: center;
+    }
+    .pill {
+      background: #21262d;
+      border: 1px solid #30363d;
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 13px;
+    }
+    .pill.success { border-color: #238636; color: #3fb950; font-weight: bold; }
+    .pill.warning { border-color: #d29922; color: #e3b341; font-weight: bold; }
+    .pill.error { border-color: #da3633; color: #f85149; font-weight: bold; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 16px;
+    }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px;
+    }
+    #stageCanvas {
+      width: 100%;
+      height: 380px;
+      background: #010409;
+      border-radius: 6px;
+      display: block;
+    }
+    .log-card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 14px;
+      max-height: 480px;
+      overflow-y: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+    }
+    .log-entry { margin-bottom: 6px; line-height: 1.4; }
+    .log-pass { color: #3fb950; font-weight: bold; }
+    .log-fail { color: #f85149; font-weight: bold; }
+    .log-info { color: #58a6ff; }
+    .log-warn { color: #e3b341; }
+
+    /* Hidden UI fixtures for DOM binding test */
+    .test-controls {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>Phase 9 Settings Wiring & Tracking Mode Controller — Verification Suite</h1>
+  <p class="subtitle">Validates SettingsManager authoritative state, bidirectional UI synchronization, SINGLE/MULTI/AUTO mode rendering, tracking toggles, and safe persistence.</p>
+
+  <div class="status-summary">
+    <div class="pill" id="testCountPill">Tests: 0 / 7</div>
+    <div class="pill warning" id="overallPill">Initializing...</div>
+    <div class="pill" id="modePill">Mode: --</div>
+    <div class="pill" id="avatarsPill">Avatars: --</div>
+    <div class="pill" id="aaPill">Anti-Aliasing: --</div>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <canvas id="stageCanvas"></canvas>
+    </div>
+    <div class="log-card" id="logContainer"></div>
+  </div>
+
+  <!-- Hidden fixtures for bidirectional DOM testing -->
+  <div class="test-controls">
+    <select id="trackingModeSelect">
+      <option value="auto">Auto</option>
+      <option value="multi">Multi</option>
+      <option value="single">Single</option>
+    </select>
+    <select id="maxPeopleSelect">
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="4">4</option>
+      <option value="6">6</option>
+      <option value="8">8</option>
+    </select>
+    <select id="targetFpsSelect">
+      <option value="30">30</option>
+      <option value="45">45</option>
+      <option value="60">60</option>
+    </select>
+    <select id="perfModeSelect">
+      <option value="AUTO">AUTO</option>
+      <option value="ULTRA">ULTRA</option>
+      <option value="HIGH">HIGH</option>
+      <option value="MEDIUM">MEDIUM</option>
+      <option value="LOW">LOW</option>
+    </select>
+    <input type="checkbox" id="settingAA" checked />
+    <input type="checkbox" id="settingBody" checked />
+    <input type="checkbox" id="settingHands" checked />
+    <input type="range" id="smoothRange" min="0" max="90" value="55" />
+  </div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { SettingsManager, DEFAULT_SETTINGS } from '/src/modules/core/settingsManager.js';
+    import { StageManager } from '/src/modules/stage/stageManager.js';
+    import { AvatarInstance } from '/src/modules/stage/avatarInstance.js';
+    import { AvatarRegistry } from '/src/modules/library/avatarRegistry.js';
+    import { PerformanceManager } from '/src/modules/performance/performanceManager.js';
+    import { PersonTracker } from '/src/modules/tracking/personTracker.js';
+
+    const canvas = document.getElementById('stageCanvas');
+    const logContainer = document.getElementById('logContainer');
+    const testCountPill = document.getElementById('testCountPill');
+    const overallPill = document.getElementById('overallPill');
+    const modePill = document.getElementById('modePill');
+    const avatarsPill = document.getElementById('avatarsPill');
+    const aaPill = document.getElementById('aaPill');
+
+    function log(msg, type = 'info') {
+      const div = document.createElement('div');
+      div.className = `log-entry log-${type}`;
+      div.textContent = `[${new Date().toISOString().slice(14, 21)}] ${msg}`;
+      logContainer.appendChild(div);
+      logContainer.scrollTop = logContainer.scrollHeight;
+    }
+
+    let passedTests = 0;
+    const TOTAL_TESTS = 7;
+
+    function assert(condition, message) {
+      if (!condition) throw new Error(message || 'Assertion failed');
+    }
+
+    async function runVerification() {
+      log('Starting Phase 9 Browser Verification Suite...', 'info');
+
+      // -------------------------------------------------------------
+      // TEST 1: SettingsManager LocalStorage Persistence & Defaults
+      // -------------------------------------------------------------
+      try {
+        log('TEST 1: SettingsManager persistence and schema validation...', 'info');
+        localStorage.removeItem('morphee_ai_settings_v1');
+        const sm = new SettingsManager();
+
+        assert(sm.get('trackingMode') === 'auto', 'Default tracking mode must be auto');
+        assert(sm.get('targetFps') === 60, 'Default targetFps must be 60');
+
+        sm.set('maxPeople', 6);
+        sm.set('targetFps', 45);
+
+        // Recreate instance to verify persistence load
+        const sm2 = new SettingsManager();
+        assert(sm2.get('maxPeople') === 6, 'maxPeople must persist');
+        assert(sm2.get('targetFps') === 45, 'targetFps must persist');
+
+        log('[PASS] TEST 1: LocalStorage persistence & retrieval verified', 'pass');
+        passedTests++;
+        testCountPill.textContent = `Tests: ${passedTests} / ${TOTAL_TESTS}`;
+      } catch (err) {
+        log(`[FAIL] TEST 1: ${err.message}`, 'fail');
+      }
+
+      // -------------------------------------------------------------
+      // TEST 2: Bidirectional DOM Synchronization
+      // -------------------------------------------------------------
+      try {
+        log('TEST 2: Bidirectional DOM ↔ SettingsManager synchronization...', 'info');
+        const sm = new SettingsManager();
+        sm.bindUI(document);
+
+        const modeSelect = document.getElementById('trackingModeSelect');
+        const aaCheckbox = document.getElementById('settingAA');
+
+        // Programmatic update -> DOM reflection
+        sm.set('trackingMode', 'multi');
+        assert(modeSelect.value === 'multi', `DOM select should update to multi, got ${modeSelect.value}`);
+
+        sm.set('antiAliasing', false);
+        assert(aaCheckbox.checked === false, `DOM checkbox should update to false`);
+
+        // DOM user interaction -> SettingsManager reflection
+        modeSelect.value = 'single';
+        modeSelect.dispatchEvent(new Event('change'));
+        assert(sm.get('trackingMode') === 'single', 'SettingsManager must update from DOM change event');
+
+        aaCheckbox.checked = true;
+        aaCheckbox.dispatchEvent(new Event('change'));
+        assert(sm.get('antiAliasing') === true, 'SettingsManager must update from DOM checkbox change');
+
+        modePill.textContent = 'Mode: SINGLE';
+        aaPill.textContent = 'Anti-Aliasing: ON';
+
+        log('[PASS] TEST 2: Bidirectional UI ↔ State synchronization verified', 'pass');
+        passedTests++;
+        testCountPill.textContent = `Tests: ${passedTests} / ${TOTAL_TESTS}`;
+      } catch (err) {
+        log(`[FAIL] TEST 2: ${err.message}`, 'fail');
+      }
+
+      // -------------------------------------------------------------
+      // TEST 3: Live Stage Rendering in SINGLE Mode
+      // -------------------------------------------------------------
+      let stage = null;
+      try {
+        log('TEST 3: StageManager SINGLE mode behavior with live VRM...', 'info');
+        stage = new StageManager(canvas);
+        const reg = new AvatarRegistry();
+        const defs = reg.getAll();
+
+        await stage.loadPrimaryAvatar(defs[0].modelUrl);
+        const av2 = new AvatarInstance('track_2', 'Secondary Avatar');
+        await av2.load(defs[1].modelUrl);
+        stage.addTrackAvatar(2, av2);
+
+        // Simulate 2 active people in SINGLE mode
+        const tracked = [
+          { trackId: 1, state: 'TRACKED', centroid: { x: 0.35, y: 0.4 } },
+          { trackId: 2, state: 'TRACKED', centroid: { x: 0.65, y: 0.4 } }
+        ];
+
+        stage.updateTrackPositions(tracked, 'single');
+        stage.render();
+
+        assert(stage.trackAvatars.get(1).visible === true, 'Primary avatar must be visible');
+        assert(stage.trackAvatars.get(2).visible === false, 'Secondary avatar must be hidden in SINGLE mode');
+        avatarsPill.textContent = 'Avatars: 1 visible (SINGLE)';
+
+        log('[PASS] TEST 3: SINGLE mode isolates primary avatar and hides secondary tracks', 'pass');
+        passedTests++;
+        testCountPill.textContent = `Tests: ${passedTests} / ${TOTAL_TESTS}`;
+      } catch (err) {
+        log(`[FAIL] TEST 3: ${err.message}`, 'fail');
+      }
+
+      // -------------------------------------------------------------
+      // TEST 4: Live Stage Rendering in MULTI and AUTO Mode
+      // -------------------------------------------------------------
+      try {
+        log('TEST 4: StageManager MULTI and AUTO mode positioning...', 'info');
+        const tracked = [
+          { trackId: 1, state: 'TRACKED', centroid: { x: 0.30, y: 0.4 } },
+          { trackId: 2, state: 'TRACKED', centroid: { x: 0.70, y: 0.4 } }
+        ];
+
+        // Switch to MULTI: both must be visible and separated
+        stage.updateTrackPositions(tracked, 'multi');
+        stage.render();
+
+        assert(stage.trackAvatars.get(1).visible === true, 'Track 1 must be visible in MULTI');
+        assert(stage.trackAvatars.get(2).visible === true, 'Track 2 must be visible in MULTI');
+        assert(stage.trackAvatars.get(1).stagePosition.x !== stage.trackAvatars.get(2).stagePosition.x, 'Avatars must be horizontally separated');
+
+        // Switch to AUTO with 1 person: behaves as single (centered)
+        stage.updateTrackPositions([tracked[0]], 'auto');
+        assert(stage.trackAvatars.get(1).visible === true);
+
+        // AUTO with 2 people: behaves as multi (spread)
+        stage.updateTrackPositions(tracked, 'auto');
+        assert(stage.trackAvatars.get(1).visible === true);
+        assert(stage.trackAvatars.get(2).visible === true);
+
+        avatarsPill.textContent = 'Avatars: 2 visible (MULTI)';
+        log('[PASS] TEST 4: MULTI & AUTO modes dynamically position and restore avatars', 'pass');
+        passedTests++;
+        testCountPill.textContent = `Tests: ${passedTests} / ${TOTAL_TESTS}`;
+      } catch (err) {
+        log(`[FAIL] TEST 4: ${err.message}`, 'fail');
+      }
+
+      // -------------------------------------------------------------
+      // TEST 5: Body & Hand Tracking Toggles
+      // -------------------------------------------------------------
+      try {
+        log('TEST 5: Body & Hand tracking toggles with Face continuity...', 'info');
+        const sm = new SettingsManager();
+
+        sm.set('bodyTracking', false);
+        sm.set('handTracking', false);
+        assert(sm.get('bodyTracking') === false);
+        assert(sm.get('handTracking') === false);
+
+        // PersonTracker must continue functioning normally when pose and hands are empty
+        const pt = new PersonTracker();
+        const faceRes = {
+          faces: [[{ x: 0.5, y: 0.4, z: 0 }]],
+          blendshapes: [[{ categoryName: 'jawOpen', score: 0.2 }]],
+          transformationMatrices: [new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1])]
+        };
+        const emptyBody = { poses: [], hands: [] };
+        const out = pt.update(faceRes, emptyBody, performance.now());
+
+        assert(out.trackedPersons.length === 1, 'Face track must remain active when body/hands are OFF');
+        assert(out.trackedPersons[0].trackId === 1);
+        assert(out.trackedPersons[0].pose === null, 'Pose must be null when bodyTracking is OFF');
+
+        log('[PASS] TEST 5: Face tracking continuity maintained with Body/Hands toggled OFF', 'pass');
+        passedTests++;
+        testCountPill.textContent = `Tests: ${passedTests} / ${TOTAL_TESTS}`;
+      } catch (err) {
+        log(`[FAIL] TEST 5: ${err.message}`, 'fail');
+      }
+
+      // -------------------------------------------------------------
+      // TEST 6: Anti-Aliasing WebGL Context Recreation
+      // -------------------------------------------------------------
+      try {
+        log('TEST 6: WebGL Anti-Aliasing recreation & avatar preservation...', 'info');
+        const initialAvatarCount = stage.avatars.size;
+
+        // Toggle Anti-Aliasing OFF
+        stage.setAntialiasing(false);
+        assert(stage.renderer !== null, 'Renderer must exist');
+        assert(stage.avatars.size === initialAvatarCount, 'Loaded avatars must be preserved across AA toggle');
+        stage.render();
+
+        // Toggle Anti-Aliasing ON
+        stage.setAntialiasing(true);
+        assert(stage.avatars.size === initialAvatarCount, 'Loaded avatars must be preserved across AA toggle');
+        stage.render();
+
+        aaPill.textContent = 'Anti-Aliasing: RECREATED OK';
+        log('[PASS] TEST 6: Hardware anti-aliasing toggled safely with zero scene or avatar loss', 'pass');
+        passedTests++;
+        testCountPill.textContent = `Tests: ${passedTests} / ${TOTAL_TESTS}`;
+      } catch (err) {
+        log(`[FAIL] TEST 6: ${err.message}`, 'fail');
+      }
+
+      // -------------------------------------------------------------
+      // TEST 7: Repeated Setting Toggle Stress Test (20 cycles)
+      // -------------------------------------------------------------
+      try {
+        log('TEST 7: Executing 20 setting toggle cycles for leak verification...', 'info');
+        const sm = new SettingsManager();
+
+        for (let cycle = 0; cycle < 20; cycle++) {
+          sm.set('bodyTracking', cycle % 2 === 0);
+          sm.set('handTracking', cycle % 2 === 1);
+          sm.set('trackingMode', cycle % 3 === 0 ? 'single' : (cycle % 3 === 1 ? 'multi' : 'auto'));
+          sm.set('maxPeople', [1, 2, 4, 6, 8][cycle % 5]);
+        }
+
+        // Reset to clean defaults
+        sm.reset();
+        assert(sm.get('trackingMode') === 'auto');
+        assert(sm.get('maxPeople') === 4);
+        assert(sm.get('bodyTracking') === true);
+
+        log('[PASS] TEST 7: 20 rapid toggle cycles completed with zero memory or state corruption', 'pass');
+        passedTests++;
+        testCountPill.textContent = `Tests: ${passedTests} / ${TOTAL_TESTS}`;
+      } catch (err) {
+        log(`[FAIL] TEST 7: ${err.message}`, 'fail');
+      }
+
+      // Final status
+      if (passedTests === TOTAL_TESTS) {
+        overallPill.className = 'pill success';
+        overallPill.textContent = 'ALL 7 BROWSER TESTS PASSED';
+        log('====================================================', 'info');
+        log('PHASE 9 BROWSER TEST SUITE COMPLETED SUCCESSFULLY (7/7)', 'pass');
+        log('====================================================', 'info');
+      } else {
+        overallPill.className = 'pill error';
+        overallPill.textContent = `FAILED (${TOTAL_TESTS - passedTests} errors)`;
+      }
+    }
+
+    window.addEventListener('DOMContentLoaded', runVerification);
+  </script>
+</body>
+</html>

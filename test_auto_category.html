@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Morphee AI — Auto Presentation Category Test Suite</title>
+  <style>
+    body { background: #08090c; color: #e8ecf1; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; margin: 0; }
+    h1 { color: #4fd1c5; font-size: 20px; margin-bottom: 8px; }
+    .summary { font-size: 13px; color: #6b7a8d; margin-bottom: 16px; }
+    .test-card { background: #12151b; border: 1px solid #1e2330; border-radius: 8px; padding: 12px 16px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+    .test-name { font-size: 13px; font-weight: 600; }
+    .test-detail { font-size: 11px; color: #6b7a8d; margin-top: 2px; }
+    .badge { padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .pass { background: rgba(46, 204, 113, 0.15); color: #2ecc71; border: 1px solid rgba(46, 204, 113, 0.3); }
+    .fail { background: rgba(231, 76, 60, 0.15); color: #e74c3c; border: 1px solid rgba(231, 76, 60, 0.3); }
+    #stats { margin-top: 16px; font-weight: 700; font-size: 14px; color: #4fd1c5; }
+  </style>
+</head>
+<body>
+  <h1>AUTO PRESENTATION CATEGORY TEST SUITE (AUTO-01 to AUTO-10)</h1>
+  <div class="summary">Validating presentation matching, immutable AvatarID locking, pool exhaustion handling, and non-biological classification.</div>
+  <div id="results"></div>
+  <div id="stats">Running tests…</div>
+
+  <script type="module">
+    import { AvatarAssignmentManager, ASSIGNMENT_STATE } from './src/modules/tracking/avatarAssignmentManager.js';
+    import { AvatarRegistry } from './src/modules/library/avatarRegistry.js';
+
+    const results = [];
+    const container = document.getElementById('results');
+
+    function assert(id, name, condition, detail = '') {
+      results.push({ id, name, passed: !!condition, detail });
+      const card = document.createElement('div');
+      card.className = 'test-card';
+      card.innerHTML = `
+        <div>
+          <div class="test-name">${id}: ${name}</div>
+          <div class="test-detail">${detail}</div>
+        </div>
+        <span class="badge ${condition ? 'pass' : 'fail'}">${condition ? 'PASS' : 'FAIL'}</span>
+      `;
+      container.appendChild(card);
+    }
+
+    function createMockPose(shoulderWidth, torsoHeight, visibility = 0.9) {
+      const midX = 0.5;
+      const midY = 0.4;
+      const halfW = shoulderWidth * 0.5;
+      const lms = [];
+      for (let i = 0; i < 33; i++) lms.push({ x: 0.5, y: 0.5, visibility });
+      lms[11] = { x: midX - halfW, y: midY, visibility }; // left shoulder
+      lms[12] = { x: midX + halfW, y: midY, visibility }; // right shoulder
+      lms[23] = { x: midX - 0.1, y: midY + torsoHeight, visibility }; // left hip
+      lms[24] = { x: midX + 0.1, y: midY + torsoHeight, visibility }; // right hip
+      return { landmarks: lms };
+    }
+
+    async function runTests() {
+      // Mock isolated registry with 2 female, 2 male, 1 neutral
+      const mockDefs = [
+        { id: 'fem_1', name: 'Hana', presentation: 'female', gender: 'female' },
+        { id: 'fem_2', name: 'Yuki', presentation: 'female', gender: 'female' },
+        { id: 'masc_1', name: 'Taro', presentation: 'male', gender: 'male' },
+        { id: 'masc_2', name: 'Orion', presentation: 'male', gender: 'male' },
+        { id: 'neut_1', name: 'Seed-san', presentation: 'androgynous', gender: 'neutral' }
+      ];
+      const testRegistry = {
+        getAll: () => [...mockDefs],
+        get: (id) => mockDefs.find(d => d.id === id) || null,
+        size: mockDefs.length
+      };
+
+      const manager = new AvatarAssignmentManager({
+        defaultAvatarId: 'fem_1',
+        registry: testRegistry,
+        selectionMode: 'auto_category'
+      });
+
+      // ── AUTO-01: Female presentation heuristic (ratio < 0.85) ──
+      // shoulderWidth 0.28, torsoHeight 0.40 -> ratio = 0.70 (< 0.85)
+      const femaleTrack = {
+        trackId: 101,
+        state: 'TRACKED',
+        pose: createMockPose(0.28, 0.40, 0.95)
+      };
+      const estFem = manager._estimateCategory(femaleTrack);
+      assert('AUTO-01', 'Female Presentation Estimation (ratio < 0.85 -> female)',
+        estFem.category === 'female' && estFem.confidence > 0.70 && estFem.ratio < 0.85,
+        `Estimated category: '${estFem.category}', confidence: ${estFem.confidence}, ratio: ${estFem.ratio}`);
+
+      // ── AUTO-02: Male presentation heuristic (ratio > 0.95) ──
+      // shoulderWidth 0.42, torsoHeight 0.40 -> ratio = 1.05 (> 0.95)
+      const maleTrack = {
+        trackId: 102,
+        state: 'TRACKED',
+        pose: createMockPose(0.42, 0.40, 0.95)
+      };
+      const estMale = manager._estimateCategory(maleTrack);
+      assert('AUTO-02', 'Male Presentation Estimation (ratio > 0.95 -> male)',
+        estMale.category === 'male' && estMale.confidence > 0.70 && estMale.ratio > 0.95,
+        `Estimated category: '${estMale.category}', confidence: ${estMale.confidence}, ratio: ${estMale.ratio}`);
+
+      // ── AUTO-03: Neutral presentation heuristic (0.85 <= ratio <= 0.95) ──
+      // shoulderWidth 0.36, torsoHeight 0.40 -> ratio = 0.90
+      const neutTrack = {
+        trackId: 103,
+        state: 'TRACKED',
+        pose: createMockPose(0.36, 0.40, 0.95)
+      };
+      const estNeut = manager._estimateCategory(neutTrack);
+      assert('AUTO-03', 'Neutral Presentation Estimation (0.85 <= ratio <= 0.95 -> neutral)',
+        estNeut.category === 'neutral',
+        `Estimated category: '${estNeut.category}', ratio: ${estNeut.ratio}`);
+
+      // ── AUTO-04: Immutable Assignment Lock ──
+      // First frame assignment for femaleTrack
+      const sync1 = manager.sync([femaleTrack]);
+      const initialAvatarId = manager.getAvatarIdForTrack(femaleTrack.trackId);
+      assert('AUTO-04', 'Initial Assignment Lock (Allocates category-matched avatar)',
+        initialAvatarId === 'fem_1' || initialAvatarId === 'fem_2',
+        `Track #101 received initial avatar: '${initialAvatarId}'`);
+
+      // ── AUTO-05: Arm Raise & Posture Fluctuation Invariance ──
+      // Physical user raises arm: changes proportions or ratio to male-like or neutral
+      const raisedArmTrack = {
+        trackId: 101, // SAME track ID
+        state: 'TRACKED',
+        pose: createMockPose(0.50, 0.35, 0.90) // artificially distorted ratio 1.42
+      };
+      const sync2 = manager.sync([raisedArmTrack]);
+      const postPoseAvatarId = manager.getAvatarIdForTrack(101);
+      assert('AUTO-05', 'Posture Fluctuation Invariance (AvatarID NEVER changes for existing TrackID)',
+        postPoseAvatarId === initialAvatarId && sync2.newlyAssigned.length === 0,
+        `AvatarID before posture change: '${initialAvatarId}', after arm raise: '${postPoseAvatarId}' (LOCKED)`);
+
+      // ── AUTO-06: Category Pool Exhaustion Fallback ──
+      // Allocate second female track (should get fem_2)
+      const femTrack2 = { trackId: 104, state: 'TRACKED', pose: createMockPose(0.26, 0.40, 0.95) };
+      manager.sync([femaleTrack, femTrack2]);
+      const secondFemAvatar = manager.getAvatarIdForTrack(104);
+
+      // Now female pool (fem_1, fem_2) is completely exhausted! Allocate a THIRD female track:
+      const femTrack3 = { trackId: 105, state: 'TRACKED', pose: createMockPose(0.25, 0.40, 0.95) };
+      manager.sync([femaleTrack, femTrack2, femTrack3]);
+      const thirdFemAvatar = manager.getAvatarIdForTrack(105);
+      const thirdRecord = manager._trackAssignments.get(105);
+      assert('AUTO-06', 'Category Pool Exhaustion Fallback (Falls back cleanly to available unique avatar)',
+        thirdFemAvatar !== null && thirdFemAvatar !== initialAvatarId && thirdFemAvatar !== secondFemAvatar &&
+        thirdRecord.selectionReason.includes('CATEGORY_POOL_EXHAUSTED'),
+        `Female pool exhausted -> Allocated '${thirdFemAvatar}' with reason '${thirdRecord.selectionReason}'`);
+
+      // ── AUTO-07: Waiting State When All Unique Avatars Exhausted ──
+      // Fill remaining 2 slots in mock registry (masc_1, masc_2, neut_1)
+      const t4 = { trackId: 106, state: 'TRACKED', pose: createMockPose(0.40, 0.40) };
+      const t5 = { trackId: 107, state: 'TRACKED', pose: createMockPose(0.40, 0.40) };
+      manager.sync([femaleTrack, femTrack2, femTrack3, t4, t5]);
+      // Now all 5 mock avatars are assigned. Introduce a 6th person:
+      const t6 = { trackId: 108, state: 'TRACKED', pose: createMockPose(0.30, 0.40) };
+      const syncOverflow = manager.sync([femaleTrack, femTrack2, femTrack3, t4, t5, t6]);
+      const stateT6 = manager.getAssignmentStateForTrack(108);
+      const avT6 = manager.getAvatarIdForTrack(108);
+      assert('AUTO-07', 'Zero Duplication & Waiting Queue (No duplicate avatars active simultaneously)',
+        stateT6 === ASSIGNMENT_STATE.WAITING_FOR_UNIQUE_AVATAR && avT6 === null,
+        `Track #108 state: '${stateT6}', assigned avatar: ${avT6} (clean waiting state)`);
+
+      // ── AUTO-08: Non-Biological Presentation Disclaimer ──
+      const hasDisclaimer = typeof manager.getPrivacyDisclaimer === 'function' &&
+                            manager.getPrivacyDisclaimer().includes('Does not claim or perform biological-sex detection');
+      assert('AUTO-08', 'Privacy & Methodology Disclaimer Enforced',
+        hasDisclaimer,
+        'Code and UI explicitly declare non-biological presentation heuristic based solely on geometric proportions');
+
+      // ── AUTO-09: Low Visibility Gating (defaults to neutral) ──
+      const lowVisTrack = { trackId: 999, state: 'TRACKED', pose: createMockPose(0.25, 0.40, 0.2) }; // vis 0.2 < 0.4
+      const estLow = manager._estimateCategory(lowVisTrack);
+      assert('AUTO-09', 'Low Confidence / Obscured Landmark Gating (defaults safely to neutral)',
+        estLow.category === 'neutral',
+        `Low visibility (0.2) safely returned category: '${estLow.category}'`);
+
+      // ── AUTO-10: Mode Switching ──
+      manager.setSelectionMode('manual');
+      assert('AUTO-10', 'Mode Switching between Manual and Auto Category',
+        manager.selectionMode === 'manual',
+        `Selection mode successfully updated to '${manager.selectionMode}'`);
+
+      // ── SUMMARY STATS ──
+      const passedCount = results.filter(r => r.passed).length;
+      const statsEl = document.getElementById('stats');
+      statsEl.textContent = `Completed: ${passedCount} / ${results.length} PASSED (${Math.round(passedCount / results.length * 100)}%)`;
+      if (passedCount === results.length) {
+        statsEl.style.color = '#2ecc71';
+      }
+      window.__testResults = { passed: passedCount === results.length, count: results.length, passedCount };
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

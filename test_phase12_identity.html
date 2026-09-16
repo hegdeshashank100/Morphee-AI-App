@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Morphee AI — Phase 12 Identity Invariant & Assignment Test Suite</title>
+  <link rel="stylesheet" href="/src/style.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #090d16;
+      color: #f1f5f9;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, monospace;
+    }
+    .test-suite-wrap {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+    .header-card {
+      background: rgba(15, 23, 42, 0.9);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 20px 24px;
+      margin-bottom: 20px;
+    }
+    .test-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .test-table th, .test-table td {
+      padding: 12px 16px;
+      text-align: left;
+      font-size: 13px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .test-table th {
+      background: rgba(30, 41, 59, 0.8);
+      font-weight: 700;
+      color: #38bdf8;
+      text-transform: uppercase;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+    }
+    .badge-pass {
+      display: inline-block;
+      padding: 3px 10px;
+      background: rgba(34, 197, 94, 0.2);
+      border: 1px solid #22c55e;
+      color: #4ade80;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .badge-fail {
+      display: inline-block;
+      padding: 3px 10px;
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid #ef4444;
+      color: #f87171;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .badge-pending {
+      display: inline-block;
+      padding: 3px 10px;
+      background: rgba(148, 163, 184, 0.2);
+      border: 1px solid #64748b;
+      color: #94a3b8;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .run-btn {
+      padding: 10px 20px;
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .run-btn:hover {
+      background: #4f46e5;
+    }
+    .log-box {
+      margin-top: 20px;
+      padding: 16px;
+      background: #020617;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 8px;
+      font-family: 'JetBrains Mono', Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.6;
+      max-height: 300px;
+      overflow-y: auto;
+      color: #cbd5e1;
+    }
+  </style>
+</head>
+<body>
+  <div class="test-suite-wrap">
+    <div class="header-card">
+      <h1 style="margin: 0 0 8px 0; font-size: 20px; color: #f8fafc;">
+        Morphee AI — Identity Invariant & Assignment Invariant Test Suite
+      </h1>
+      <p style="margin: 0 0 16px 0; font-size: 13px; color: #94a3b8;">
+        Phase 12 Verification: Trajectory crossing, detection order permutations, occlusion coasting, reacquisition, zero-duplicate guarantee, and waiting queue mechanics.
+      </p>
+      <button class="run-btn" id="runBtn" onclick="runIdentityTests()">Run All Identity Tests</button>
+      <span id="summaryBadge" style="margin-left: 14px; font-size: 13px; font-weight: 600;"></span>
+    </div>
+
+    <table class="test-table" id="testTable">
+      <thead>
+        <tr>
+          <th style="width: 70px;">ID</th>
+          <th style="width: 260px;">Invariant Assertion</th>
+          <th>Description & Verification Strategy</th>
+          <th style="width: 100px;">Status</th>
+        </tr>
+      </thead>
+      <tbody id="testRows">
+        <!-- Injected by script -->
+      </tbody>
+    </table>
+
+    <div class="log-box" id="logBox">Ready to execute tests...</div>
+  </div>
+
+  <script type="module">
+    import { AvatarAssignmentManager, ASSIGNMENT_STATE } from './src/modules/tracking/avatarAssignmentManager.js';
+    import { AvatarRegistry } from './src/modules/library/avatarRegistry.js';
+
+    function log(msg) {
+      const box = document.getElementById('logBox');
+      const time = new Date().toISOString().split('T')[1].slice(0, 8);
+      box.innerHTML += `[${time}] ${msg}<br>`;
+      box.scrollTop = box.scrollHeight;
+    }
+
+    const TEST_CASES = [
+      {
+        id: 'ID-01',
+        title: 'TrackID -> AvatarID Persistence',
+        desc: 'Single track survives across multiple frames without changing its assigned AvatarID.',
+        run: async () => {
+          const mgr = new AvatarAssignmentManager({ defaultAvatarId: 'avatar_b' });
+          const t1 = { trackId: 1, state: 'TRACKED', centroid: { x: 0.5, y: 0.5 } };
+          const res1 = mgr.sync([t1]);
+          const av1 = mgr.getAvatarIdForTrack(1);
+
+          for (let f = 0; f < 30; f++) {
+            t1.centroid.x += 0.005;
+            mgr.sync([t1]);
+            if (mgr.getAvatarIdForTrack(1) !== av1) {
+              return { pass: false, error: `Avatar changed at frame ${f}` };
+            }
+          }
+          return { pass: av1 === 'avatar_b', details: `Assigned: ${av1}` };
+        }
+      },
+      {
+        id: 'ID-02',
+        title: 'Detection-Order Permutation Invariance',
+        desc: 'Feeding detections in reversed order [2, 1] vs [1, 2] preserves exact AvatarID mappings.',
+        run: async () => {
+          const mgr = new AvatarAssignmentManager();
+          const t1 = { trackId: 1, state: 'TRACKED', centroid: { x: 0.2, y: 0.5 } };
+          const t2 = { trackId: 2, state: 'TRACKED', centroid: { x: 0.8, y: 0.5 } };
+          
+          mgr.sync([t1, t2]);
+          const av1 = mgr.getAvatarIdForTrack(1);
+          const av2 = mgr.getAvatarIdForTrack(2);
+
+          // Reverse feed order
+          for (let f = 0; f < 20; f++) {
+            mgr.sync([t2, t1]);
+            if (mgr.getAvatarIdForTrack(1) !== av1 || mgr.getAvatarIdForTrack(2) !== av2) {
+              return { pass: false, error: `Swapped on reversed feed at frame ${f}` };
+            }
+          }
+          return { pass: av1 !== av2, details: `Track #1: ${av1}, Track #2: ${av2}` };
+        }
+      },
+      {
+        id: 'ID-03',
+        title: 'Trajectory Crossing Invariance',
+        desc: 'Two tracks physically swap horizontal positions (crossing trajectories) without swapping avatars.',
+        run: async () => {
+          const mgr = new AvatarAssignmentManager();
+          const t1 = { trackId: 1, state: 'TRACKED', centroid: { x: 0.2, y: 0.5 } };
+          const t2 = { trackId: 2, state: 'TRACKED', centroid: { x: 0.8, y: 0.5 } };
+          mgr.sync([t1, t2]);
+          const av1 = mgr.getAvatarIdForTrack(1);
+          const av2 = mgr.getAvatarIdForTrack(2);
+
+          // Simulate crossing: T1 moves right (0.2 -> 0.8), T2 moves left (0.8 -> 0.2)
+          for (let i = 0; i <= 20; i++) {
+            t1.centroid.x = 0.2 + (0.6 * i / 20);
+            t2.centroid.x = 0.8 - (0.6 * i / 20);
+            mgr.sync([t1, t2]);
+
+            if (mgr.getAvatarIdForTrack(1) !== av1 || mgr.getAvatarIdForTrack(2) !== av2) {
+              return { pass: false, error: `Crossing caused avatar swap at step ${i}` };
+            }
+          }
+          return { pass: true, details: `Crossed completely; Track #1 remained ${av1}, Track #2 remained ${av2}` };
+        }
+      },
+      {
+        id: 'ID-04',
+        title: 'Coasting & Occlusion Grace Invariance',
+        desc: 'Track in COASTING state holds its AvatarID reservation; never released prematurely.',
+        run: async () => {
+          const mgr = new AvatarAssignmentManager();
+          const t1 = { trackId: 1, state: 'TRACKED', centroid: { x: 0.5, y: 0.5 } };
+          mgr.sync([t1]);
+          const av1 = mgr.getAvatarIdForTrack(1);
+
+          // Track goes into COASTING
+          t1.state = 'COASTING';
+          for (let f = 0; f < 15; f++) {
+            mgr.sync([t1]);
+            if (mgr.getAvatarIdForTrack(1) !== av1) {
+              return { pass: false, error: `Coasting track lost avatar at frame ${f}` };
+            }
+          }
+          return { pass: true, details: `Held ${av1} through 15 coasting frames` };
+        }
+      },
+      {
+        id: 'ID-05',
+        title: 'Reacquisition Invariance',
+        desc: 'Track transitioning COASTING -> REACQUIRED -> TRACKED retains exact initial AvatarID.',
+        run: async () => {
+          const mgr = new AvatarAssignmentManager();
+          const t1 = { trackId: 1, state: 'TRACKED', centroid: { x: 0.5, y: 0.5 } };
+          mgr.sync([t1]);
+          const initialAv = mgr.getAvatarIdForTrack(1);
+
+          t1.state = 'COASTING';
+          mgr.sync([t1]);
+          t1.state = 'REACQUIRED';
+          mgr.sync([t1]);
+          t1.state = 'TRACKED';
+          mgr.sync([t1]);
+
+          const finalAv = mgr.getAvatarIdForTrack(1);
+          return { pass: initialAv === finalAv, details: `Retained ${finalAv} through full reacquisition cycle` };
+        }
+      },
+      {
+        id: 'ID-06',
+        title: 'Zero Duplicate Avatar Guarantee (No-Duplication)',
+        desc: 'No two active tracks EVER share the same AvatarID under any circumstances.',
+        run: async () => {
+          const mgr = new AvatarAssignmentManager();
+          const tracks = [];
+          for (let i = 1; i <= 6; i++) {
+            tracks.push({ trackId: i, state: 'TRACKED', centroid: { x: i * 0.15, y: 0.5 } });
+          }
+          mgr.sync(tracks);
+
+          const assignments = mgr.getAssignments();
+          const assignedIds = Array.from(assignments.values());
+          const uniqueSet = new Set(assignedIds);
+
+          const pass = assignedIds.length === uniqueSet.size;
+          return {
+            pass,
+            details: `Assigned: [${assignedIds.join(', ')}], Unique: ${uniqueSet.size}/${assignedIds.length}`
+          };
+        }
+      },
+      {
+        id: 'ID-07',
+        title: 'Capacity Exhaustion & WAITING State',
+        desc: 'When population exceeds available unique avatars, excess tracks enter WAITING_FOR_UNIQUE_AVATAR.',
+        run: async () => {
+          const registry = new AvatarRegistry();
+          // Registry has exactly 4 models
+          const mgr = new AvatarAssignmentManager({ registry });
+
+          const tracks = [];
+          for (let i = 1; i <= 6; i++) {
+            tracks.push({ trackId: i, state: 'TRACKED', centroid: { x: i * 0.15, y: 0.5 } });
+          }
+          const syncRes = mgr.sync(tracks);
+
+          const assignedCount = mgr.getAssignments().size;
+          const waitingCount = syncRes.waiting.length;
+          const t5State = mgr.getAssignmentStateForTrack(5);
+          const t6State = mgr.getAssignmentStateForTrack(6);
+
+          const pass = assignedCount === 4 &&
+            t5State === ASSIGNMENT_STATE.WAITING_FOR_UNIQUE_AVATAR &&
+            t6State === ASSIGNMENT_STATE.WAITING_FOR_UNIQUE_AVATAR &&
+            mgr.getAvatarIdForTrack(5) === null;
+
+          return {
+            pass,
+            details: `Assigned: ${assignedCount}/4, Waiting: ${waitingCount}, Track #5 State: ${t5State}`
+          };
+        }
+      },
+      {
+        id: 'ID-08',
+        title: 'Termination & Waiting Track Service',
+        desc: 'When an assigned track terminates, waiting track is deterministically promoted to ASSIGNED.',
+        run: async () => {
+          const registry = new AvatarRegistry();
+          const mgr = new AvatarAssignmentManager({ registry });
+
+          // 5 tracks (4 assigned, 1 waiting)
+          const t1 = { trackId: 1, state: 'TRACKED', centroid: { x: 0.1, y: 0.5 } };
+          const t2 = { trackId: 2, state: 'TRACKED', centroid: { x: 0.3, y: 0.5 } };
+          const t3 = { trackId: 3, state: 'TRACKED', centroid: { x: 0.5, y: 0.5 } };
+          const t4 = { trackId: 4, state: 'TRACKED', centroid: { x: 0.7, y: 0.5 } };
+          const t5 = { trackId: 5, state: 'TRACKED', centroid: { x: 0.9, y: 0.5 } };
+          mgr.sync([t1, t2, t3, t4, t5]);
+
+          const t1Av = mgr.getAvatarIdForTrack(1);
+          const t5StateBefore = mgr.getAssignmentStateForTrack(5);
+
+          // Terminate Track #1
+          t1.state = 'TERMINATED';
+          const syncRes2 = mgr.sync([t1, t2, t3, t4, t5]);
+
+          const t5StateAfter = mgr.getAssignmentStateForTrack(5);
+          const t5Av = mgr.getAvatarIdForTrack(5);
+
+          const pass = t5StateBefore === ASSIGNMENT_STATE.WAITING_FOR_UNIQUE_AVATAR &&
+            t5StateAfter === ASSIGNMENT_STATE.ASSIGNED &&
+            t5Av === t1Av;
+
+          return {
+            pass,
+            details: `Track #1 freed '${t1Av}', Track #5 transitioned WAITING -> ASSIGNED with '${t5Av}'`
+          };
+        }
+      },
+      {
+        id: 'ID-09',
+        title: 'Population Expansion Preserves Existing Assignments',
+        desc: 'Expanding population 1 -> 2 -> 4 -> 6 -> 8 never alters earlier tracks\' avatar IDs.',
+        run: async () => {
+          const mgr = new AvatarAssignmentManager();
+          const tracks = [{ trackId: 1, state: 'TRACKED', centroid: { x: 0.5, y: 0.5 } }];
+          mgr.sync(tracks);
+          const t1Av = mgr.getAvatarIdForTrack(1);
+
+          for (let n = 2; n <= 8; n++) {
+            tracks.push({ trackId: n, state: 'TRACKED', centroid: { x: n * 0.1, y: 0.5 } });
+            mgr.sync(tracks);
+            if (mgr.getAvatarIdForTrack(1) !== t1Av) {
+              return { pass: false, error: `Track #1 changed avatar when population reached ${n}` };
+            }
+          }
+          return { pass: true, details: `Track #1 remained '${t1Av}' across 1->8 population expansion` };
+        }
+      }
+    ];
+
+    function renderRows() {
+      const tbody = document.getElementById('testRows');
+      tbody.innerHTML = '';
+      for (const tc of TEST_CASES) {
+        const tr = document.createElement('tr');
+        tr.id = `row-${tc.id}`;
+        tr.innerHTML = `
+          <td style="font-weight: 700; color: #38bdf8;">${tc.id}</td>
+          <td style="font-weight: 600;">${tc.title}</td>
+          <td style="color: #94a3b8; font-size: 12px;">${tc.desc}</td>
+          <td><span class="badge-pending" id="badge-${tc.id}">PENDING</span></td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    window.runIdentityTests = async function() {
+      const runBtn = document.getElementById('runBtn');
+      runBtn.disabled = true;
+      runBtn.textContent = 'Running Tests...';
+      log('=== STARTING IDENTITY INVARIANT TEST SUITE ===');
+
+      let passCount = 0;
+      for (const tc of TEST_CASES) {
+        const badge = document.getElementById(`badge-${tc.id}`);
+        badge.className = 'badge-pending';
+        badge.textContent = 'RUNNING';
+
+        try {
+          const res = await tc.run();
+          if (res.pass) {
+            passCount++;
+            badge.className = 'badge-pass';
+            badge.textContent = 'PASS';
+            log(`[PASS] ${tc.id}: ${tc.title} — ${res.details || 'OK'}`);
+          } else {
+            badge.className = 'badge-fail';
+            badge.textContent = 'FAIL';
+            log(`[FAIL] ${tc.id}: ${tc.title} — ${res.error || 'Failed assertion'}`);
+          }
+        } catch (err) {
+          badge.className = 'badge-fail';
+          badge.textContent = 'ERROR';
+          log(`[ERROR] ${tc.id}: ${tc.title} — ${err.message}`);
+        }
+      }
+
+      const total = TEST_CASES.length;
+      const allPassed = passCount === total;
+      const summary = document.getElementById('summaryBadge');
+      summary.innerHTML = allPassed
+        ? `<span class="badge-pass" style="font-size: 13px; padding: 6px 14px;">ALL PASSED (${passCount}/${total})</span>`
+        : `<span class="badge-fail" style="font-size: 13px; padding: 6px 14px;">FAILURES (${passCount}/${total})</span>`;
+
+      log(`=== COMPLETED: ${passCount}/${total} PASSED ===`);
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run All Identity Tests';
+
+      window.__identityTestResults = {
+        total,
+        passed: passCount,
+        failed: total - passCount,
+        allPassed
+      };
+
+      return window.__identityTestResults;
+    };
+
+    renderRows();
+    // Auto-run on load
+    window.runIdentityTests();
+  </script>
+</body>
+</html>

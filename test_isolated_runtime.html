@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Morphee AI — True Network-Isolated Runtime Verification</title>
+  <style>
+    body {
+      background: #08090c;
+      color: #e8ecf1;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      padding: 30px;
+      margin: 0;
+    }
+    h1 { color: #4fd1c5; margin-bottom: 6px; font-size: 22px; }
+    .subtitle { color: #6b7a8d; margin-bottom: 20px; font-size: 13px; }
+    .barrier-alert {
+      background: rgba(231, 76, 60, 0.1);
+      border: 1px solid #e74c3c;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin-bottom: 20px;
+      font-size: 13px;
+      color: #ff8a80;
+    }
+    .test-card {
+      background: #12151b;
+      border: 1px solid #1e2330;
+      border-radius: 8px;
+      padding: 14px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .status-badge {
+      font-size: 12px;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+    .pass { background: rgba(46, 204, 113, 0.2); color: #2ecc71; border: 1px solid #2ecc71; }
+    .fail { background: rgba(231, 76, 60, 0.2); color: #e74c3c; border: 1px solid #e74c3c; }
+    .pending { background: rgba(241, 196, 15, 0.2); color: #f1c40f; border: 1px solid #f1c40f; }
+    pre {
+      background: #0e1015;
+      padding: 14px;
+      border-radius: 8px;
+      border: 1px solid #1e2330;
+      font-size: 11px;
+      color: #a0aec0;
+      max-height: 280px;
+      overflow-y: auto;
+    }
+    canvas { display: none; }
+  </style>
+</head>
+<body>
+  <h1>Morphee AI — True Network-Isolated Runtime Verification</h1>
+  <div class="subtitle">Complete external network blocking: zero CDN, zero external calls allowed</div>
+
+  <div class="barrier-alert" id="barrierStatus">
+    <strong>STRICT NETWORK BARRIER ACTIVE:</strong> Outbound requests outside localhost are hard-intercepted and blocked.
+  </div>
+
+  <div id="testContainer"></div>
+
+  <h3 style="margin-top: 20px; font-size: 14px; color: #a0aec0;">Telemetry & Request Log:</h3>
+  <pre id="logArea">Initializing…</pre>
+
+  <canvas id="testCanvas" width="640" height="480"></canvas>
+
+  <script>
+    // ─────────────────────────────────────────────────────────────
+    // STRICT NETWORK ISOLATION BARRIER
+    // ─────────────────────────────────────────────────────────────
+    window.__attemptedExternalRequests = [];
+    window.__localRequests = [];
+
+    function isExternal(url) {
+      if (!url) return false;
+      const str = String(url);
+      if (str.startsWith('data:') || str.startsWith('blob:')) return false;
+      if (str.startsWith('/') || str.startsWith('./') || str.startsWith('../')) return false;
+      try {
+        const parsed = new URL(str, window.location.href);
+        const isLocal = parsed.hostname === 'localhost' ||
+                        parsed.hostname === '127.0.0.1' ||
+                        parsed.hostname === window.location.hostname;
+        return !isLocal;
+      } catch (e) {
+        return true;
+      }
+    }
+
+    const origFetch = window.fetch;
+    window.fetch = async function(resource, init) {
+      const url = (typeof resource === 'string') ? resource : (resource && resource.url ? resource.url : '');
+      if (isExternal(url)) {
+        console.error('[NETWORK_ISOLATION_BLOCKED] Fetch blocked:', url);
+        window.__attemptedExternalRequests.push({ type: 'fetch', url, time: Date.now() });
+        throw new TypeError(`[NETWORK_ISOLATION_ERROR] Network access is strictly disabled for external destination: ${url}`);
+      }
+      window.__localRequests.push({ type: 'fetch', url, time: Date.now() });
+      return origFetch.apply(this, arguments);
+    };
+
+    const origXHR = window.XMLHttpRequest.prototype.open;
+    window.XMLHttpRequest.prototype.open = function(method, url) {
+      if (isExternal(url)) {
+        console.error('[NETWORK_ISOLATION_BLOCKED] XHR blocked:', url);
+        window.__attemptedExternalRequests.push({ type: 'xhr', url, time: Date.now() });
+        throw new Error(`[NETWORK_ISOLATION_ERROR] Network access is strictly disabled for external destination: ${url}`);
+      }
+      window.__localRequests.push({ type: 'xhr', url, time: Date.now() });
+      return origXHR.apply(this, arguments);
+    };
+
+    window.addEventListener('error', (e) => {
+      console.error('[Page Error]:', e.message, 'at', e.filename, 'line:', e.lineno, e.error);
+    });
+    window.addEventListener('unhandledrejection', (e) => {
+      console.error('[Page Unhandled Rejection]:', e.reason);
+    });
+  </script>
+
+  <script type="module">
+    import { LandmarkTracker } from './src/modules/landmarkTracker.js';
+    import { BodyTracker } from './src/modules/bodyTracker.js';
+    import { AvatarInstance } from './src/modules/stage/avatarInstance.js';
+    import { AvatarRegistry } from './src/modules/library/avatarRegistry.js';
+    import { AvatarAssignmentManager, ASSIGNMENT_STATE } from './src/modules/tracking/avatarAssignmentManager.js';
+    import { assetManager } from './src/modules/core/assetManager.js';
+
+    const testContainer = document.getElementById('testContainer');
+    const logArea = document.getElementById('logArea');
+    const logs = [];
+
+    function log(msg) {
+      logs.push(`[${new Date().toISOString().substring(11, 19)}] ${msg}`);
+      logArea.textContent = logs.join('\n');
+      logArea.scrollTop = logArea.scrollHeight;
+    }
+
+    const tests = [
+      { id: 't1', title: '1. Local MediaPipe WASM initializes successfully (no CDN)' },
+      { id: 't2', title: '2. Local face_landmarker.task initializes successfully' },
+      { id: 't3', title: '3. Local pose_landmarker_heavy.task initializes successfully' },
+      { id: 't4', title: '4. Local hand_landmarker.task initializes successfully' },
+      { id: 't5', title: '5. Bundled Hana (AvatarSample_B.vrm) loads successfully' },
+      { id: 't6', title: '6. Bundled Yuki (AvatarSample_A.vrm) loads successfully' },
+      { id: 't7', title: '7. Face tracking inference actually runs on video/canvas' },
+      { id: 't8', title: '8. Pose tracking inference actually runs on video/canvas' },
+      { id: 't9', title: '9. Hand tracking inference actually runs on video/canvas' },
+      { id: 't10', title: '10. Zero remote CDN / network requests attempted' },
+      { id: 't11', title: '11. Multi-person assignment with bundled set: Hana -> Yuki -> WAITING' },
+      { id: 't12', title: '12. Fresh restart remains functional under network isolation' }
+    ];
+
+    const testElements = new Map();
+    for (const t of tests) {
+      const card = document.createElement('div');
+      card.className = 'test-card';
+      card.innerHTML = `
+        <div>
+          <strong style="font-size: 13px;">${t.title}</strong>
+          <div id="${t.id}-detail" style="font-size: 11px; color: #6b7a8d; margin-top: 3px;">Pending…</div>
+        </div>
+        <span id="${t.id}-badge" class="status-badge pending">PENDING</span>
+      `;
+      testContainer.appendChild(card);
+      testElements.set(t.id, {
+        badge: document.getElementById(`${t.id}-badge`),
+        detail: document.getElementById(`${t.id}-detail`)
+      });
+    }
+
+    function setTestResult(id, passed, detail) {
+      const el = testElements.get(id);
+      if (!el) return;
+      el.badge.className = `status-badge ${passed ? 'pass' : 'fail'}`;
+      el.badge.textContent = passed ? 'PASS' : 'FAIL';
+      el.detail.textContent = detail || (passed ? 'Verified successfully' : 'Failed');
+      el.detail.style.color = passed ? '#4fd1c5' : '#e74c3c';
+    }
+
+    async function runIsolatedVerification() {
+      log('Starting TRUE NETWORK-ISOLATED RUNTIME VERIFICATION…');
+
+      // Create test canvas frame
+      const canvas = document.getElementById('testCanvas');
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#1e2330';
+      ctx.fillRect(0, 0, 640, 480);
+      ctx.fillStyle = '#f39c12';
+      ctx.beginPath();
+      ctx.arc(320, 200, 80, 0, Math.PI * 2);
+      ctx.fill();
+
+      let landmarkTracker = null;
+      let bodyTracker = null;
+      let hanaInstance = null;
+      let yukiInstance = null;
+
+      // STEP 1 & 2: Initialize LandmarkTracker (WASM + Face Model)
+      try {
+        log('Initializing LandmarkTracker from local WASM and local face model…');
+        landmarkTracker = new LandmarkTracker();
+        const wasmPath = await assetManager.getWasmPath();
+        const faceModelPath = await assetManager.getModelPath('face');
+        log(`Resolved WASM: ${wasmPath} | Face: ${faceModelPath}`);
+        
+        await landmarkTracker.init('GPU', 2);
+        log('LandmarkTracker initialized successfully!');
+        setTestResult('t1', true, `WASM resolved locally at ${wasmPath}`);
+        setTestResult('t2', true, `Face landmarker loaded from ${faceModelPath}`);
+      } catch (err) {
+        log('FAIL LandmarkTracker init: ' + err.message);
+        setTestResult('t1', false, err.message);
+        setTestResult('t2', false, err.message);
+      }
+
+      // STEP 3 & 4: Initialize BodyTracker (Pose Heavy + Hand Models)
+      try {
+        log('Initializing BodyTracker from local WASM, pose model, and hand model…');
+        bodyTracker = new BodyTracker();
+        const posePath = await assetManager.getModelPath('pose');
+        const handPath = await assetManager.getModelPath('hand');
+        log(`Resolved Pose: ${posePath} | Hand: ${handPath}`);
+
+        await bodyTracker.init('GPU', 2);
+        log('BodyTracker initialized successfully!');
+        setTestResult('t3', true, `Pose Heavy loaded from ${posePath}`);
+        setTestResult('t4', true, `Hand landmarker loaded from ${handPath}`);
+      } catch (err) {
+        log('FAIL BodyTracker init: ' + err.message);
+        setTestResult('t3', false, err.message);
+        setTestResult('t4', false, err.message);
+      }
+
+      // STEP 5: Load Bundled Hana (AvatarSample_B.vrm)
+      try {
+        log('Loading bundled Hana avatar from /avatars/AvatarSample_B.vrm…');
+        hanaInstance = new AvatarInstance('avatar_b', 'Hana');
+        await hanaInstance.load('/avatars/AvatarSample_B.vrm');
+        const hasVrm = !!hanaInstance.vrm;
+        log(`Hana loaded: hasVRM=${hasVrm}`);
+        setTestResult('t5', hasVrm, 'Loaded /avatars/AvatarSample_B.vrm cleanly into Three.js VRM');
+      } catch (err) {
+        log('FAIL Hana load: ' + err.message);
+        setTestResult('t5', false, err.message);
+      }
+
+      // STEP 6: Load Bundled Yuki (AvatarSample_A.vrm)
+      try {
+        log('Loading bundled Yuki avatar from /avatars/AvatarSample_A.vrm…');
+        yukiInstance = new AvatarInstance('avatar_a', 'Yuki');
+        await yukiInstance.load('/avatars/AvatarSample_A.vrm');
+        const hasVrm = !!yukiInstance.vrm;
+        log(`Yuki loaded: hasVRM=${hasVrm}`);
+        setTestResult('t6', hasVrm, 'Loaded /avatars/AvatarSample_A.vrm cleanly into Three.js VRM');
+      } catch (err) {
+        log('FAIL Yuki load: ' + err.message);
+        setTestResult('t6', false, err.message);
+      }
+
+      // STEP 7: Face tracking inference execution
+      try {
+        log('Executing face tracking inference on test canvas frame…');
+        const faceRes = landmarkTracker.detect(canvas, performance.now());
+        const ok = faceRes && Array.isArray(faceRes.faces) && typeof faceRes.count === 'number';
+        log(`Face tracking executed: count=${faceRes.count}`);
+        setTestResult('t7', ok, `Executed detect() successfully; result format verified (count=${faceRes.count})`);
+      } catch (err) {
+        log('FAIL Face inference: ' + err.message);
+        setTestResult('t7', false, err.message);
+      }
+
+      // STEP 8 & 9: Pose and Hand tracking inference execution
+      try {
+        log('Executing pose and hand tracking inference on test canvas frame…');
+        const bodyRes = bodyTracker.detect(canvas, performance.now());
+        const okPose = bodyRes && Array.isArray(bodyRes.poses) && typeof bodyRes.poseCount === 'number';
+        const okHand = bodyRes && Array.isArray(bodyRes.hands) && typeof bodyRes.handCount === 'number';
+        log(`Body tracking executed: poses=${bodyRes.poseCount}, hands=${bodyRes.handCount}`);
+        setTestResult('t8', okPose, `Pose inference executed cleanly (poses=${bodyRes.poseCount})`);
+        setTestResult('t9', okHand, `Hand inference executed cleanly (hands=${bodyRes.handCount})`);
+      } catch (err) {
+        log('FAIL Body inference: ' + err.message);
+        setTestResult('t8', false, err.message);
+        setTestResult('t9', false, err.message);
+      }
+
+      // STEP 10: Verify ZERO remote CDN / network requests attempted
+      const blockedCount = window.__attemptedExternalRequests.length;
+      log(`Total attempted external network requests: ${blockedCount}`);
+      if (blockedCount === 0) {
+        setTestResult('t10', true, `0 external requests attempted. Local requests handled: ${window.__localRequests.length}`);
+      } else {
+        const urls = window.__attemptedExternalRequests.map(r => r.url).join(', ');
+        setTestResult('t10', false, `Blocked ${blockedCount} external attempts: ${urls}`);
+      }
+
+      // STEP 11: Multi-person assignment with bundled set (Hana + Yuki)
+      try {
+        log('Verifying multi-person avatar allocation with bundled set…');
+        const bundledRegistry = new AvatarRegistry();
+        // Keep only bundled avatars in the registry for this test
+        bundledRegistry._avatars.clear();
+        bundledRegistry.register({
+          id: 'avatar_b',
+          name: 'Hana',
+          url: '/avatars/AvatarSample_B.vrm',
+          bundled: true
+        });
+        bundledRegistry.register({
+          id: 'avatar_a',
+          name: 'Yuki',
+          url: '/avatars/AvatarSample_A.vrm',
+          bundled: true
+        });
+
+        const mgr = new AvatarAssignmentManager({
+          defaultAvatarId: 'avatar_b',
+          registry: bundledRegistry
+        });
+
+        // 3 people arrive
+        const p1 = { trackId: 1, state: 'TRACKED' };
+        const p2 = { trackId: 2, state: 'TRACKED' };
+        const p3 = { trackId: 3, state: 'TRACKED' };
+
+        mgr.sync([p1, p2, p3]);
+
+        const a1 = mgr.getAvatarIdForTrack(1);
+        const a2 = mgr.getAvatarIdForTrack(2);
+        const a3 = mgr.getAvatarIdForTrack(3);
+        const s3 = mgr.getAssignmentStateForTrack(3);
+
+        log(`Assignments: Track 1 -> ${a1} | Track 2 -> ${a2} | Track 3 -> ${a3} (${s3})`);
+
+        const okAlloc = (a1 === 'avatar_b') &&
+                        (a2 === 'avatar_a') &&
+                        (a3 === null) &&
+                        (s3 === ASSIGNMENT_STATE.WAITING_FOR_UNIQUE_AVATAR);
+
+        // Verify unicity: no duplication
+        const assignedValues = Array.from(mgr.getAssignments().values());
+        const noDupes = new Set(assignedValues).size === assignedValues.length;
+
+        // Verify release and reallocation when Track 1 leaves
+        mgr.sync([p2, p3]);
+        const a3After = mgr.getAvatarIdForTrack(3);
+        log(`After Track 1 departs: Track 3 -> ${a3After}`);
+
+        const okRealloc = a3After === 'avatar_b';
+
+        setTestResult('t11', okAlloc && noDupes && okRealloc,
+          `Track 1=Hana, Track 2=Yuki, Track 3=WAITING (null). When Track 1 terminated, Track 3 acquired Hana.`);
+      } catch (err) {
+        log('FAIL Multi-person assignment: ' + err.message);
+        setTestResult('t11', false, err.message);
+      }
+
+      // STEP 12: Fresh restart under network isolation
+      try {
+        log('Simulating fresh restart with network isolation active…');
+        const secondLandmark = new LandmarkTracker();
+        await secondLandmark.init('GPU', 1);
+        const secondRes = secondLandmark.detect(canvas, performance.now());
+        const okRestart = secondRes && Array.isArray(secondRes.faces);
+        log('Fresh restart verified successfully!');
+        setTestResult('t12', okRestart, 'Fresh restart initialized and ran detection with zero network access.');
+      } catch (err) {
+        log('FAIL Fresh restart: ' + err.message);
+        setTestResult('t12', false, err.message);
+      }
+
+      // Final report summary
+      const finalReport = {
+        allPassed: tests.every(t => {
+          const el = testElements.get(t.id);
+          return el && el.badge.textContent === 'PASS';
+        }),
+        attemptedExternalRequests: window.__attemptedExternalRequests,
+        localRequestsCount: window.__localRequests.length
+      };
+
+      log('--- VERIFICATION COMPLETED --- ALL PASSED: ' + finalReport.allPassed);
+      window.__isolatedVerificationReport = finalReport;
+    }
+
+    runIsolatedVerification();
+  </script>
+</body>
+</html>

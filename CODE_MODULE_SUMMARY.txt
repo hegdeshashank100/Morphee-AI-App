@@ -1,0 +1,281 @@
+Project: Morphee AI (JavaScript)
+
+This document summarizes important code modules, key functions/classes, main logic flow, a flow diagram, and important algorithms/sections.
+
+Important Modules
+- Entry / Orchestration: src/main.js — UI, GPU detection, model loading, camera start/stop, main detection loop.
+- Face Landmarks: src/modules/landmarkTracker.js — LandmarkTracker (init, detect).
+- Body & Hands: src/modules/bodyTracker.js — BodyTracker (init, detect).
+- VRM Avatar Renderer: src/modules/vrmRenderer.js — VrmRenderer (loadRig, expressions, pose/hands).
+- Simple Face Rig Renderer: src/modules/faceRenderer.js — FaceRenderer (morph-target rig for blendshapes).
+- GPU detection / UI: src/modules/gpuDetect.js — detectGPU, populateGPUInfo.
+- Avatar registry: src/modules/avatarModels.js — avatar model list.
+
+Key Functions / Classes
+- LandmarkTracker
+  - async init(delegate): loads MediaPipe face landmarker (WASM). 
+  - detect(video, timestampMs): detectForVideo → returns face landmarks, blendshapes, matrices.
+
+- BodyTracker
+  - async init(delegate): loads PoseLandmarker and HandLandmarker.
+  - detect(video, timestampMs): returns { pose, hands }.
+
+- VrmRenderer
+  - async loadRig(url): loads VRM via GLTFLoader + VRM plugin; normalizes model.
+  - applyBlendshapes(categories, alpha): maps MediaPipe blendshapes to VRM via applyArkitToVrmExpressions.
+  - applyHeadPose(matrixData, enabled): decompose 4x4 matrix → apply rotation to head bone.
+  - applyPose(worldLandmarks, alpha): arm quaternion targets + slerp damping.
+  - applyHands(handsResult, poseImageLandmarks, poseWorldLandmarks, alpha): wrist twist + finger curls.
+  - startRenderLoop(): three.js render loop + FPS tracking.
+
+- FaceRenderer
+  - loadRig(): loads facecap GLB with morph targets.
+  - applyBlendshapes(categories, smoothingAlpha): EMA smoothing → morphTargetInfluences.
+  - applyHeadPose(matrixData, enabled): head group rotation mapping.
+
+- gpuDetect
+  - detectGPU(): WebGL detection, vendor parsing, returns delegate choice and capabilities.
+  - populateGPUInfo(gpuInfo): writes GPU info to UI elements.
+
+Main Logic Flow (concise)
+1. detectGPU() → populate GPU UI and choose delegate (GPU/CPU).
+2. Instantiate VrmRenderer (or FaceRenderer), start render loop, load default avatar with loadRig().
+3. On Start: init LandmarkTracker and BodyTracker with delegate.
+4. Start webcam; begin main loop:
+   - tracker.detect(video, now) → face landmarks, blendshapes, facial transform matrices.
+   - update overlay visualization and blendshape UI.
+   - faceRenderer.applyBlendshapes(...), applyHeadPose(...).
+   - bodyTracker.detect(video, now) → pose + hands.
+   - faceRenderer.applyPose(...), applyHands(...).
+   - requestAnimationFrame(loop).
+5. On Stop: stop media tracks, clear overlays, update UI.
+
+Flow diagram (Mermaid)
+```mermaid
+flowchart TD
+  A[Page load] --> B[detectGPU & populate UI]
+  B --> C[Instantiate Renderer (VrmRenderer)]
+  C --> D[load default avatar]
+  E[User clicks Start] --> F[Init LandmarkTracker & BodyTracker]
+  F --> G[Start webcam]
+  G --> H[Main loop]
+  H --> I[Face detect: landmarks, blendshapes, transforms]
+  I --> J[applyBlendshapes & applyHeadPose -> VRM/face]
+  H --> K[Body/hands detect]
+  K --> L[applyPose & applyHands -> VRM skeleton/fingers]
+  J --> M[Renderer render loop]
+  L --> M
+  M --> H
+  E --> N[Stop] --> O[Stop tracks & clear UI]
+```
+
+Important Code Sections / Algorithms
+
+- Blendshape mapping & temporal smoothing: `applyArkitToVrmExpressions` ([src/modules/vrmRenderer.js](src/modules/vrmRenderer.js))
+  - Maps MediaPipe categories → VRM expression targets.
+  - Caps emotion influence and suppresses false blinks during smiles.
+  - Per-channel EMA temporal smoothing with differentiated alphas.
+
+  Example (excerpt):
+  ```js
+  function applyArkitToVrmExpressions(vrm, categories, alpha, state) {
+    const score = (name) => categories.find((c) => c.categoryName === name)?.score ?? 0;
+
+    const jawOpen    = score('jawOpen');
+    const smileRaw   = (score('mouthSmileLeft') + score('mouthSmileRight')) / 2;
+    const frownRaw   = (score('mouthFrownLeft') + score('mouthFrownRight')) / 2;
+    const browDownRaw = (score('browDownLeft') + score('browDownRight')) / 2;
+    const browUpRaw   = score('browInnerUp');
+    const eyeWideRaw  = (score('eyeWideLeft') + score('eyeWideRight')) / 2;
+    const rawBlinkL  = score('eyeBlinkLeft');
+    const rawBlinkR  = score('eyeBlinkRight');
+
+    const EMOTION_CAP = 0.35;
+    const happy     = Math.min(THREE.MathUtils.clamp(smileRaw * 1.4, 0, 1), EMOTION_CAP);
+    const sad       = Math.min(THREE.MathUtils.clamp(frownRaw * 1.4, 0, 1), EMOTION_CAP);
+
+    let blinkL = rawBlinkL; let blinkR = rawBlinkR;
+    if (smileRaw > 0.3) {
+      const suppress = THREE.MathUtils.clamp((smileRaw - 0.3) / 0.4, 0, 1);
+      blinkL *= (1 - suppress);
+      blinkR *= (1 - suppress);
+    }
+    blinkL = blinkL > 0.4 ? THREE.MathUtils.clamp((blinkL - 0.3) * 2, 0, 1) : 0;
+    blinkR = blinkR > 0.4 ? THREE.MathUtils.clamp((blinkR - 0.3) * 2, 0, 1) : 0;
+
+    const target = { happy, sad, aa: jawOpen, blinkLeft: blinkL, blinkRight: blinkR };
+
+    const em = vrm.expressionManager; if (!em) return;
+    for (const name in target) {
+      let a = Math.max(alpha * 0.5, 0.12);
+      if (name.startsWith('blink')) a = 0.7;
+      const val = target[name] < 0.05 ? 0 : target[name];
+      const prev = state[name] ?? 0;
+      const next = prev + (val - prev) * a;
+      state[name] = next;
+      em.setValue(name, next);
+    }
+  }
+  ```
+
+- Face morph-target smoothing: `FaceRenderer.applyBlendshapes` ([src/modules/faceRenderer.js](src/modules/faceRenderer.js))
+  - Per-target exponential moving average (EMA) then assignment to morph influences.
+
+  Example (excerpt):
+  ```js
+  applyBlendshapes(categories, smoothingAlpha) {
+    if (!this.faceMesh) return;
+    for (const c of categories) {
+      const idx = this.morphDict[c.categoryName];
+      if (idx === undefined) continue;
+      const prev = this.smoothed[c.categoryName] ?? 0;
+      const next = prev + (c.score - prev) * Math.max(smoothingAlpha, 0.05);
+      this.smoothed[c.categoryName] = next;
+      this.faceMesh.morphTargetInfluences[idx] = next;
+    }
+  }
+  ```
+
+- Head-pose conversion: `applyHeadPose` (both renderers)
+  - Decompose MediaPipe 4x4 matrix→quat→Euler, then apply axis correction.
+
+  Example (excerpt from `FaceRenderer`):
+  ```js
+  applyHeadPose(matrixData, enabled) {
+    if (!this.faceGroup) return;
+    if (!enabled) { this.faceGroup.rotation.set(0,0,0); return; }
+    const m = new THREE.Matrix4().fromArray(matrixData);
+    const quat = new THREE.Quaternion(); const pos = new THREE.Vector3(); const scl = new THREE.Vector3();
+    m.decompose(pos, quat, scl);
+    const euler = new THREE.Euler().setFromQuaternion(quat, 'YXZ');
+    this.faceGroup.rotation.set(euler.x, Math.PI - euler.y, -euler.z);
+  }
+  ```
+
+- Arm IK-style mapping: `VrmRenderer.applyPose` ([src/modules/vrmRenderer.js](src/modules/vrmRenderer.js))
+  - Computes upper/lower arm directions, target quaternions via `setFromUnitVectors`, adaptive damping + slerp.
+
+  Example (excerpt):
+  ```js
+  applyPose(worldLandmarks, alpha = 0.3) {
+    if (!this.vrm?.humanoid || !worldLandmarks) return;
+    const dampQuat = (bone, targetQ, baseAlpha) => {
+      const angle = bone.quaternion.angleTo(targetQ);
+      if (angle < 0.015) return;
+      const a = angle < 0.06 ? baseAlpha * 0.3 : baseAlpha;
+      bone.quaternion.slerp(targetQ, a);
+    };
+
+    for (const side of ['left','right']) {
+      const pShoulder = worldLandmarks[POSE_IDX[`${side}Shoulder`]];
+      const pElbow    = worldLandmarks[POSE_IDX[`${side}Elbow`]];
+      const pWrist    = worldLandmarks[POSE_IDX[`${side}Wrist`]];
+      if (!pWrist || !pElbow) { /* relax to rest */ continue; }
+      const shoulder = poseToThree(pShoulder);
+      const elbow    = poseToThree(pElbow);
+      const wrist    = poseToThree(pWrist);
+      const upperDir = elbow.clone().sub(shoulder).normalize();
+      if (upperDir.lengthSq() === 0) continue;
+      const upperBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}UpperArm`);
+      if (upperBone) {
+        const tgt = new THREE.Quaternion().setFromUnitVectors(ARM_REST_DIR[`${side}UpperArm`], upperDir);
+        dampQuat(upperBone, tgt, alpha);
+      }
+      // lower arm hinge computed similarly
+    }
+  }
+  ```
+
+- Wrist twist and finger curl: `VrmRenderer.applyHands` ([src/modules/vrmRenderer.js](src/modules/vrmRenderer.js))
+  - Wrist twist: rotation from forearm dir → hand forward vector, clamped by max angle and smoothed.
+  - Finger curl: compute angles between landmark segments, normalise to 0..1, dead-zone, smooth, map to bone rotations.
+
+  Example (excerpt):
+  ```js
+  applyHands(handsResult, poseImageLandmarks, poseWorldLandmarks, alpha = 0.4) {
+    if (!this.vrm?.humanoid || !handsResult?.landmarks) return;
+    for (let h = 0; h < handsResult.landmarks.length; h++) {
+      const lm = handsResult.landmarks[h];
+      const worldLm = handsResult.worldLandmarks?.[h];
+      // determine side, compute handFwd
+      const handBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}Hand`);
+      if (handBone && worldLm && poseWorldLandmarks) {
+        const handToThree = (pt) => new THREE.Vector3(pt.x, pt.y, -pt.z);
+        const wWrist = handToThree(worldLm[0]);
+        const wMcp   = handToThree(worldLm[9]);
+        const handFwd = wMcp.clone().sub(wWrist).normalize();
+        const pElbow = poseToThree(poseWorldLandmarks[POSE_IDX[`${side}Elbow`]]);
+        const pWrist = poseToThree(poseWorldLandmarks[POSE_IDX[`${side}Wrist`]]);
+        const forearmDir = pWrist.clone().sub(pElbow).normalize();
+        const twistQ = new THREE.Quaternion().setFromUnitVectors(forearmDir, handFwd);
+        // clamp twistQ angle, slerp to handBone.quaternion
+      }
+
+      // finger per-joint curl using FINGER_LANDMARKS → set bone.rotation
+    }
+  }
+  ```
+
+- GPU detection heuristics: `detectGPU` ([src/modules/gpuDetect.js](src/modules/gpuDetect.js))
+  - Probes WebGL2/WebGL1, reads `WEBGL_debug_renderer_info` if available, sets `delegate`.
+
+  Example (excerpt):
+  ```js
+  export function detectGPU() {
+    const info = { renderer: 'Unknown', vendor: 'Unknown', webglVersion: 'N/A', delegate: 'CPU', isCudaCapable: false };
+    const canvas = document.createElement('canvas');
+    let gl = canvas.getContext('webgl2');
+    if (gl) info.webglVersion = 'WebGL 2.0'; else { gl = canvas.getContext('webgl'); if (gl) info.webglVersion = 'WebGL 1.0'; }
+    if (!gl) { info.summary = 'No WebGL support detected — running on CPU.'; return info; }
+    const debugExt = gl.getExtension('WEBGL_debug_renderer_info');
+    if (debugExt) {
+      info.renderer = gl.getParameter(debugExt.UNMASKED_RENDERER_WEBGL) || 'Unknown';
+      info.vendor = gl.getParameter(debugExt.UNMASKED_VENDOR_WEBGL) || 'Unknown';
+    } else {
+      info.renderer = gl.getParameter(gl.RENDERER) || 'Unknown';
+      info.vendor = gl.getParameter(gl.VENDOR) || 'Unknown';
+    }
+    const rendererLower = info.renderer.toLowerCase();
+    if (rendererLower.includes('nvidia')) { info.isNvidia = true; info.isCudaCapable = true; info.delegate = 'GPU'; }
+    else { info.delegate = 'GPU'; }
+    canvas.remove();
+    return info;
+  }
+  ```
+
+- Model loading and VRM cleanup: `VrmRenderer.loadRig` ([src/modules/vrmRenderer.js](src/modules/vrmRenderer.js))
+
+  Example (excerpt):
+  ```js
+  async loadRig(url) {
+    const modelUrl = url || DEFAULT_VRM_URL;
+    if (this.vrm) { this.scene.remove(this.vrm.scene); this.vrm = null; }
+    const loader = new GLTFLoader();
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+    return new Promise((resolve, reject) => {
+      loader.load(modelUrl, (gltf) => {
+        const vrm = gltf.userData.vrm;
+        VRMUtils.removeUnnecessaryVertices(gltf.scene);
+        VRMUtils.removeUnnecessaryJoints(gltf.scene);
+        VRMUtils.rotateVRM0(vrm);
+        this.vrm = vrm; this.scene.add(vrm.scene);
+        this.headBone = vrm.humanoid?.getNormalizedBoneNode('head') ?? null;
+        const expressionNames = vrm.expressionManager ? Object.keys(vrm.expressionManager.expressionMap ?? {}) : [];
+        resolve(expressionNames.length || 8);
+      }, undefined, reject);
+    });
+  }
+  ```
+
+Pointers / Where To Inspect
+- `applyArkitToVrmExpressions` in [src/modules/vrmRenderer.js](src/modules/vrmRenderer.js)
+- `applyPose` and `applyHands` in [src/modules/vrmRenderer.js](src/modules/vrmRenderer.js)
+- `loadRig` in [src/modules/vrmRenderer.js](src/modules/vrmRenderer.js)
+- `LandmarkTracker` in [src/modules/landmarkTracker.js](src/modules/landmarkTracker.js)
+- `BodyTracker` in [src/modules/bodyTracker.js](src/modules/bodyTracker.js)
+- Main orchestration & loop in [src/main.js](src/main.js)
+
+Next steps
+- Open any file for line-level annotated excerpts, or generate an inline-commented copy of a specific function (e.g., applyArkitToVrmExpressions).
+
+-- End of summary

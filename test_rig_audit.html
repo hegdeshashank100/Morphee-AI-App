@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Morphee AI - VRM Rig Audit</title>
+</head>
+<body>
+  <h1>VRM Rig Audit</h1>
+  <pre id="output">Running audit...</pre>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+    import { VRMLoaderPlugin } from '@pixiv/three-vrm';
+    import { avatarRegistry } from '/src/modules/library/avatarRegistry.js';
+
+    async function runAudit() {
+      const bundled = avatarRegistry.getAll().filter(a => a.bundled);
+      const audit = [];
+
+      const armBoneNames = [
+        'leftUpperArm', 'leftLowerArm', 'leftHand',
+        'rightUpperArm', 'rightLowerArm', 'rightHand'
+      ];
+
+      const fingerPrefixes = [
+        'leftThumb', 'leftIndex', 'leftMiddle', 'leftRing', 'leftLittle',
+        'rightThumb', 'rightIndex', 'rightMiddle', 'rightRing', 'rightLittle'
+      ];
+      const fingerSuffixes = ['Metacarpal', 'Proximal', 'Intermediate', 'Distal'];
+
+      for (const model of bundled) {
+        try {
+          const loader = new GLTFLoader();
+          loader.register(p => new VRMLoaderPlugin(p));
+
+          const gltf = await new Promise((resolve, reject) => {
+            loader.load(model.url, resolve, undefined, reject);
+          });
+
+          const vrm = gltf.userData?.vrm;
+          if (!vrm) {
+            audit.push({ id: model.id, name: model.name, error: 'No VRM in userData' });
+            continue;
+          }
+
+          const humanoid = vrm.humanoid;
+          const humanoidAvailable = !!humanoid;
+
+          const missingArmBones = [];
+          for (const b of armBoneNames) {
+            const node = humanoid?.getNormalizedBoneNode(b) || humanoid?.getRawBoneNode(b);
+            if (!node) missingArmBones.push(b);
+          }
+
+          let totalFingerBones = 0;
+          let foundFingerBones = 0;
+          const missingFingerBones = [];
+          for (const pfx of fingerPrefixes) {
+            for (const sfx of fingerSuffixes) {
+              const name = pfx + sfx;
+              totalFingerBones++;
+              const node = humanoid?.getNormalizedBoneNode(name) || humanoid?.getRawBoneNode(name);
+              if (node) {
+                foundFingerBones++;
+              } else {
+                missingFingerBones.push(name);
+              }
+            }
+          }
+
+          // Check normalized bone nodes vs raw bone nodes
+          const leftUpperArm = humanoid?.getNormalizedBoneNode('leftUpperArm');
+          const rightUpperArm = humanoid?.getNormalizedBoneNode('rightUpperArm');
+          const leftLowerArm = humanoid?.getNormalizedBoneNode('leftLowerArm');
+          const rightLowerArm = humanoid?.getNormalizedBoneNode('rightLowerArm');
+          const leftHand = humanoid?.getNormalizedBoneNode('leftHand');
+          const rightHand = humanoid?.getNormalizedBoneNode('rightHand');
+
+          audit.push({
+            id: model.id,
+            name: model.name,
+            vrmVersion: vrm.meta?.metaVersion || (vrm.isVRM0 ? '0.0' : '1.0'),
+            humanoidAvailable,
+            armBonesAvailable: missingArmBones.length === 0,
+            missingArmBones,
+            fingerBonesRatio: foundFingerBones + '/' + totalFingerBones,
+            missingFingerCount: missingFingerBones.length,
+            supportedHandTracking: missingArmBones.length === 0 ? (foundFingerBones >= 20 ? 'FULL' : 'ARM/HAND ONLY') : 'NONE',
+            hasLeftHand: !!leftHand,
+            hasRightHand: !!rightHand,
+            leftUpperArmNode: leftUpperArm?.name || null,
+            rightUpperArmNode: rightUpperArm?.name || null,
+            leftLowerArmNode: leftLowerArm?.name || null,
+            rightLowerArmNode: rightLowerArm?.name || null,
+            leftHandNode: leftHand?.name || null,
+            rightHandNode: rightHand?.name || null
+          });
+        } catch (err) {
+          audit.push({ id: model.id, name: model.name, error: err.message });
+        }
+      }
+
+      window.__auditResults = audit;
+      document.getElementById('output').textContent = JSON.stringify(audit, null, 2);
+    }
+
+    runAudit();
+  </script>
+</body>
+</html>

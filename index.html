@@ -5,8 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Morphee AI — Real-Time 4D Avatar System</title>
 <meta name="description" content="Real-time desktop facial tracking driving 3D VRM avatars with GPU acceleration.">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
@@ -36,37 +34,41 @@
     </a>
   </nav>
 
-  <!-- GPU Status -->
+  <!-- SYSTEM & HARDWARE -->
   <div class="sidebar-section">
     <div class="section-title">SYSTEM</div>
-    <div class="gpu-status" id="gpuStatus">
+    <div class="gpu-status compact" id="gpuStatus">
       <div class="gpu-icon" id="gpuIcon">⚡</div>
-      <div>
+      <div class="gpu-info-col">
         <div class="gpu-name" id="gpuName">Detecting GPU…</div>
         <div class="gpu-detail" id="gpuDetail">Checking WebGL capabilities</div>
       </div>
     </div>
   </div>
 
-  <!-- Performance -->
+  <!-- COMPACT RUNTIME TELEMETRY -->
   <div class="sidebar-section">
-    <div class="section-title">PERFORMANCE</div>
-    <div class="perf-grid">
-      <div class="perf-item">
-        <div class="perf-value" id="mRenderFps">--</div>
-        <div class="perf-label">Render FPS</div>
+    <div class="section-title">RUNTIME</div>
+    <div class="sidebar-compact-stats">
+      <div class="sidebar-stat-row">
+        <span>RENDER</span>
+        <span class="stat-highlight" id="mRenderFps">--</span>
       </div>
-      <div class="perf-item">
-        <div class="perf-value" id="mInfer">--</div>
-        <div class="perf-label">Inference</div>
+      <div class="sidebar-stat-row">
+        <span>INFERENCE</span>
+        <span id="mInfer">--</span>
       </div>
-      <div class="perf-item">
-        <div class="perf-value" id="mPose">--</div>
-        <div class="perf-label">Head Pose</div>
+      <div class="sidebar-stat-row">
+        <span>TIER</span>
+        <span class="stat-accent" id="mTier">HIGH</span>
       </div>
-      <div class="perf-item">
-        <div class="perf-value" id="mBody">--</div>
-        <div class="perf-label">Body</div>
+      <div class="sidebar-stat-row">
+        <span>TRACKING</span>
+        <span id="mBody">0 pose · 0 hands</span>
+      </div>
+      <div class="sidebar-stat-row" style="display: none;">
+        <span id="mPose">--</span>
+        <span id="mTiming">--</span>
       </div>
     </div>
   </div>
@@ -78,21 +80,24 @@
   <!-- ─── VIEW: Live Capture ─── -->
   <div class="view active" id="view-live">
     <div class="content-header">
-      <h1>Live Capture</h1>
+      <div class="header-left">
+        <h1>Live Capture</h1>
+      </div>
       <div class="header-pills">
         <div class="pill" id="facePill">no face</div>
         <div class="pill accent" id="fpsPill">-- FPS</div>
       </div>
     </div>
 
+    <!-- Live Stage Grid -->
     <div class="live-grid">
-      <!-- Webcam Panel -->
-      <div class="card">
+      <!-- Camera Panel -->
+      <div class="card card-camera">
         <div class="card-header">
           <h2>Camera Feed</h2>
           <div class="controls">
-            <button id="startBtn">Start Camera</button>
-            <button id="stopBtn" class="secondary" disabled>Stop</button>
+            <button id="startBtn" class="btn-compact">Start Camera</button>
+            <button id="stopBtn" class="secondary btn-compact" disabled>Stop</button>
           </div>
         </div>
         <div class="video-wrap">
@@ -102,14 +107,16 @@
         <div class="status-line" id="statusLine">Idle — click Start Camera to begin.</div>
       </div>
 
-      <!-- 3D Avatar Panel -->
-      <div class="card">
+      <!-- 3D Avatar Stage Panel -->
+      <div class="card card-avatar">
         <div class="card-header">
           <h2>3D Avatar Output</h2>
           <div class="active-model-pill" id="activeModelPill">Loading…</div>
         </div>
         <div class="render-wrap">
           <canvas id="renderCanvas"></canvas>
+          <!-- Multi-Person Stage HUD Overlay -->
+          <div class="stage-hud-overlay" id="stageHudOverlay" role="region" aria-label="Multi-Person Tracking HUD"></div>
           <div class="loading-overlay" id="loadingOverlay">
             <div class="loader-spinner"></div>
             <span>Loading avatar model…</span>
@@ -119,10 +126,136 @@
       </div>
     </div>
 
+    <!-- Performance Status Strip -->
+    <div class="perf-status-strip" id="perfStatusStrip">
+      <div class="perf-strip-item">
+        <span class="strip-label">RENDER</span>
+        <span class="strip-val" id="stripRenderFps">-- FPS</span>
+      </div>
+      <div class="strip-divider">|</div>
+      <div class="perf-strip-item">
+        <span class="strip-label">FRAME</span>
+        <span class="strip-val" id="stripFrameTime">-- ms</span>
+      </div>
+      <div class="strip-divider">|</div>
+      <div class="perf-strip-item">
+        <span class="strip-label">INFERENCE</span>
+        <span class="strip-val" id="stripInference">-- ms</span>
+      </div>
+      <div class="strip-divider">|</div>
+      <div class="perf-strip-item">
+        <span class="strip-label">TIER</span>
+        <span class="strip-val tier-tag" id="stripTier">AUTO · HIGH</span>
+      </div>
+      <div class="strip-divider">|</div>
+      <div class="perf-strip-item">
+        <span class="strip-label">BODY / HANDS</span>
+        <span class="strip-val" id="stripBodyHands">0 pose · cached</span>
+      </div>
+      <div class="strip-divider">|</div>
+      <div class="perf-strip-item">
+        <span class="strip-label">DELEGATE</span>
+        <span class="strip-val" id="stripDelegate">GPU</span>
+      </div>
+      <button class="strip-diag-btn" id="toggleDiagBtn" title="Toggle detailed diagnostic telemetry and bottleneck profiling">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20v-6M6 20V10M18 20V4"/></svg>
+        Diagnostics
+      </button>
+    </div>
+
+    <!-- Collapsible Detailed Diagnostics & Quality Telemetry Drawer -->
+    <div class="card diagnostics-drawer" id="diagnosticsDrawer" style="display: none;">
+      <div class="card-header">
+        <h2>Quality Diagnostics & Bottleneck Profiling</h2>
+        <span class="diag-close" id="closeDiagBtn">✕ Close</span>
+      </div>
+      <div class="diag-grid">
+        <div class="diag-col">
+          <h3>Detection Confidence</h3>
+          <div class="diag-row"><span>Face Confidence</span><span id="dFaceConf">--</span></div>
+          <div class="diag-row"><span>Pose Confidence</span><span id="dPoseConf">--</span></div>
+          <div class="diag-row"><span>Hand Confidence</span><span id="dHandConf">--</span></div>
+          <div class="diag-row"><span>Hand Inference State</span><span id="dHandState">--</span></div>
+        </div>
+        <div class="diag-col">
+          <h3>Landmark Integrity</h3>
+          <div class="diag-row"><span>Face Landmarks</span><span id="dFaceLms">-- / 478 pts</span></div>
+          <div class="diag-row"><span>Pose Landmarks</span><span id="dPoseLms">-- / 33 pts</span></div>
+          <div class="diag-row"><span>Detected Hands</span><span id="dHandsCnt">--</span></div>
+          <div class="diag-row"><span>Average Landmark Jitter</span><span id="dJitter">--</span></div>
+        </div>
+        <div class="diag-col">
+          <h3>Tracking Continuity</h3>
+          <div class="diag-row"><span>Tracking Lost Frames</span><span id="dLostFrames">0</span></div>
+          <div class="diag-row"><span>Reacquisition Events</span><span id="dReacquisitions">0</span></div>
+          <div class="diag-row"><span>TrackID Switches</span><span id="dTrackSwitches">0</span></div>
+          <div class="diag-row"><span>AvatarID Switches</span><span id="dAvatarSwitches">0</span></div>
+        </div>
+        <div class="diag-col">
+          <h3>Latency Breakdown & Bottlenecks</h3>
+          <div class="diag-row"><span>Face Inference</span><span id="dFaceInfer">-- ms</span></div>
+          <div class="diag-row"><span>Pose Inference (Heavy)</span><span id="dPoseInfer">-- ms</span></div>
+          <div class="diag-row"><span>Hand Inference</span><span id="dHandInfer">-- ms</span></div>
+          <div class="diag-row"><span>Tracking & Framing</span><span id="dTrackFrame">-- ms</span></div>
+          <div class="diag-row"><span>Three.js Render Pass</span><span id="dRenderPass">-- ms</span></div>
+        </div>
+        <div class="diag-col">
+          <h3>Rig & Retargeting Audit</h3>
+          <div class="diag-row"><span>Humanoid Rig</span><span id="dRigAudit">Standard VRM</span></div>
+          <div class="diag-row"><span>Hand Tracking</span><span id="dHandTrackSupport">FULL</span></div>
+          <div class="diag-row"><span>Finger Bones</span><span id="dFingerBones">-- / 40</span></div>
+          <div class="diag-row"><span>Hand Decay State</span><span id="dDecayState">Active</span></div>
+        </div>
+        <div class="diag-col">
+          <h3>Auto Presentation Category</h3>
+          <div class="diag-row"><span>Selection Mode</span><span id="dSelectMode">Manual</span></div>
+          <div class="diag-row"><span>Estimated Category</span><span id="dEstCategory">Neutral</span></div>
+          <div class="diag-row"><span>Category Confidence</span><span id="dCategoryConf">--</span></div>
+          <div class="diag-row"><span>Allocation Reason</span><span id="dAllocReason">INITIAL</span></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Controls Row -->
     <div class="controls-row">
       <div class="card compact">
         <h2>Tracking Controls</h2>
+        <div class="toggle-row">
+          <label for="trackingModeSelect">Tracking mode</label>
+          <select id="trackingModeSelect" class="styled-select">
+            <option value="auto" selected>Auto (1: Single, 2+: Multi)</option>
+            <option value="multi">Multi-Avatar</option>
+            <option value="single">Single Person (Primary only)</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <label for="maxPeopleSelect">Max people (faces)</label>
+          <select id="maxPeopleSelect" class="styled-select">
+            <option value="1">1 Person</option>
+            <option value="2">2 People</option>
+            <option value="4" selected>4 People</option>
+            <option value="6">6 People</option>
+            <option value="8">8 People</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <label for="targetFpsSelect">Target FPS</label>
+          <select id="targetFpsSelect" class="styled-select">
+            <option value="60" selected>60 FPS</option>
+            <option value="45">45 FPS</option>
+            <option value="30">30 FPS</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <label for="perfModeSelect">Performance profile</label>
+          <select id="perfModeSelect" class="styled-select">
+            <option value="AUTO" selected>Auto (Adaptive Quality)</option>
+            <option value="ULTRA">Ultra (Full Fidelity)</option>
+            <option value="HIGH">High</option>
+            <option value="MEDIUM">Medium (Staggered)</option>
+            <option value="LOW">Low (Power Saver)</option>
+          </select>
+        </div>
         <div class="toggle-row">
           <label for="smoothRange">Temporal smoothing</label>
           <input type="range" id="smoothRange" min="0" max="90" value="55">
@@ -130,6 +263,13 @@
         <div class="toggle-row">
           <label for="poseToggle">Apply head pose</label>
           <input type="checkbox" id="poseToggle" checked>
+        </div>
+        <div class="toggle-row">
+          <label for="avatarSelectModeSelect" title="Automatic Presentation Category: Optional body-proportion heuristic for assigning avatars. Does not perform biometric identification.">Auto presentation category</label>
+          <select id="avatarSelectModeSelect" class="styled-select" data-setting="avatarSelectionMode">
+            <option value="manual" selected>Manual (Registry Order)</option>
+            <option value="auto_category">Auto Presentation Category</option>
+          </select>
         </div>
       </div>
       <div class="card compact blend-card">
@@ -148,10 +288,21 @@
       </div>
     </div>
 
-    <div class="filter-row">
-      <button class="filter-btn active" data-filter="all">All</button>
-      <button class="filter-btn" data-filter="male">Male</button>
-      <button class="filter-btn" data-filter="female">Female</button>
+    <div class="notification-banner" id="galleryNotification" style="display: none;"></div>
+
+    <div class="gallery-controls">
+      <div class="search-wrap">
+        <input type="text" id="avatarSearchInput" class="search-input" placeholder="Search avatars by name, tag, category, style, source…" autocomplete="off" />
+      </div>
+      <div class="filter-row">
+        <button class="filter-btn active" data-filter="all">All</button>
+        <button class="filter-btn" data-filter="female">Female</button>
+        <button class="filter-btn" data-filter="male">Male</button>
+        <button class="filter-btn" data-filter="anime">Anime</button>
+        <button class="filter-btn" data-filter="stylized">Stylized</button>
+        <button class="filter-btn" data-filter="robot">Robot</button>
+        <button class="filter-btn" data-filter="favorites">★ Favorites</button>
+      </div>
     </div>
 
     <div class="avatar-grid" id="avatarGrid">
@@ -183,19 +334,65 @@
       <div class="card compact">
         <h2>Tracking</h2>
         <div class="toggle-row">
+          <label>Tracking mode</label>
+          <select data-setting="trackingMode">
+            <option value="auto">Auto (1: Single, 2+: Multi)</option>
+            <option value="multi">Multi-Avatar</option>
+            <option value="single">Single Person (Primary only)</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <label>Max people capacity</label>
+          <select data-setting="maxPeople">
+            <option value="1">1 Person</option>
+            <option value="2">2 People</option>
+            <option value="4">4 People</option>
+            <option value="6">6 People</option>
+            <option value="8">8 People</option>
+          </select>
+        </div>
+        <div class="toggle-row">
           <label>Face landmark density</label>
-          <select id="settingFaceDensity">
+          <select id="settingFaceDensity" data-setting="faceLandmarkDensity">
             <option value="refined" selected>Refined (478 pts)</option>
             <option value="standard">Standard (468 pts)</option>
           </select>
         </div>
         <div class="toggle-row">
           <label>Body tracking</label>
-          <input type="checkbox" id="settingBody" checked>
+          <input type="checkbox" id="settingBody" data-setting="bodyTracking" checked>
         </div>
         <div class="toggle-row">
           <label>Hand tracking</label>
-          <input type="checkbox" id="settingHands" checked>
+          <input type="checkbox" id="settingHands" data-setting="handTracking" checked>
+        </div>
+        <div class="toggle-row">
+          <label title="Automatic Presentation Category: Optional body-proportion heuristic for assigning avatars. Does not perform biometric identification.">Auto presentation category</label>
+          <select id="settingAvatarSelection" data-setting="avatarSelectionMode">
+            <option value="manual" selected>Manual (Registry Order)</option>
+            <option value="auto_category">Auto Presentation Category</option>
+          </select>
+        </div>
+      </div>
+      <div class="card compact">
+        <h2>Performance & Quality</h2>
+        <div class="toggle-row">
+          <label>Target FPS objective</label>
+          <select data-setting="targetFps">
+            <option value="60">60 FPS</option>
+            <option value="45">45 FPS</option>
+            <option value="30">30 FPS</option>
+          </select>
+        </div>
+        <div class="toggle-row">
+          <label>Performance profile</label>
+          <select data-setting="performanceProfile">
+            <option value="AUTO">Auto (Adaptive Quality)</option>
+            <option value="ULTRA">Ultra (Full Fidelity)</option>
+            <option value="HIGH">High</option>
+            <option value="MEDIUM">Medium (Staggered)</option>
+            <option value="LOW">Low (Power Saver)</option>
+          </select>
         </div>
       </div>
       <div class="card compact">
