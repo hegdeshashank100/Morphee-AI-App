@@ -1,0 +1,607 @@
+{
+  "A": {
+    "fps": 48.4,
+    "totalFramesMeasured": 120,
+    "windowSamples": 120,
+    "buckets": {
+      "over16ms": 120,
+      "over33ms": 0,
+      "over50ms": 0,
+      "over100ms": 0,
+      "pctOver16ms": 100,
+      "pctOver33ms": 0,
+      "pctOver50ms": 0,
+      "pctOver100ms": 0
+    },
+    "stats": {
+      "totalFrameMs": {
+        "avg": 20.66,
+        "median": 20.6,
+        "p95": 21,
+        "p99": 21.5,
+        "worst": 24.1,
+        "samples": 120
+      },
+      "faceMs": {
+        "avg": 20.45,
+        "median": 20.4,
+        "p95": 20.5,
+        "p99": 20.5,
+        "worst": 20.8,
+        "samples": 120
+      },
+      "poseMs": {
+        "avg": 0,
+        "median": 0,
+        "p95": 0,
+        "p99": 0,
+        "worst": 0,
+        "samples": 120
+      },
+      "handsMs": {
+        "avg": 0,
+        "median": 0,
+        "p95": 0,
+        "p99": 0,
+        "worst": 0,
+        "samples": 120
+      },
+      "trackingMs": {
+        "avg": 0.03,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.3,
+        "worst": 0.6,
+        "samples": 120
+      },
+      "assignmentMs": {
+        "avg": 0.01,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.2,
+        "samples": 120
+      },
+      "avatarUpdateMs": {
+        "avg": 0.03,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.2,
+        "worst": 0.4,
+        "samples": 120
+      },
+      "expressionMs": {
+        "avg": 0.34,
+        "median": 0.4,
+        "p95": 0.4,
+        "p99": 0.4,
+        "worst": 0.4,
+        "samples": 120
+      },
+      "bodyRetargetMs": {
+        "avg": 1.2,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "handRetargetMs": {
+        "avg": 0.8,
+        "median": 0.8,
+        "p95": 0.8,
+        "p99": 0.8,
+        "worst": 0.8,
+        "samples": 120
+      },
+      "physicsMs": {
+        "avg": 1.16,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "framingMs": {
+        "avg": 0.01,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.1,
+        "samples": 120
+      },
+      "renderMs": {
+        "avg": 0.76,
+        "median": 0.1,
+        "p95": 1.8,
+        "p99": 1.8,
+        "worst": 1.8,
+        "samples": 120
+      }
+    }
+  },
+  "B": {
+    "fps": 36.2,
+    "totalFramesMeasured": 120,
+    "windowSamples": 120,
+    "buckets": {
+      "over16ms": 120,
+      "over33ms": 60,
+      "over50ms": 0,
+      "over100ms": 0,
+      "pctOver16ms": 100,
+      "pctOver33ms": 50,
+      "pctOver50ms": 0,
+      "pctOver100ms": 0
+    },
+    "stats": {
+      "totalFrameMs": {
+        "avg": 27.59,
+        "median": 34.3,
+        "p95": 34.6,
+        "p99": 34.7,
+        "worst": 34.8,
+        "samples": 120
+      },
+      "faceMs": {
+        "avg": 10.23,
+        "median": 20.4,
+        "p95": 20.5,
+        "p99": 20.5,
+        "worst": 20.5,
+        "samples": 120
+      },
+      "poseMs": {
+        "avg": 17.14,
+        "median": 34.2,
+        "p95": 34.3,
+        "p99": 34.3,
+        "worst": 34.3,
+        "samples": 120
+      },
+      "handsMs": {
+        "avg": 0,
+        "median": 0,
+        "p95": 0,
+        "p99": 0,
+        "worst": 0,
+        "samples": 120
+      },
+      "trackingMs": {
+        "avg": 0.02,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.2,
+        "samples": 120
+      },
+      "assignmentMs": {
+        "avg": 0.01,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.1,
+        "samples": 120
+      },
+      "avatarUpdateMs": {
+        "avg": 0.06,
+        "median": 0.1,
+        "p95": 0.1,
+        "p99": 0.2,
+        "worst": 0.4,
+        "samples": 120
+      },
+      "expressionMs": {
+        "avg": 0.4,
+        "median": 0.4,
+        "p95": 0.4,
+        "p99": 0.4,
+        "worst": 0.4,
+        "samples": 120
+      },
+      "bodyRetargetMs": {
+        "avg": 1.2,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "handRetargetMs": {
+        "avg": 0.8,
+        "median": 0.8,
+        "p95": 0.8,
+        "p99": 0.8,
+        "worst": 0.8,
+        "samples": 120
+      },
+      "physicsMs": {
+        "avg": 1.13,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "framingMs": {
+        "avg": 0,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.1,
+        "samples": 120
+      },
+      "renderMs": {
+        "avg": 0.61,
+        "median": 0.1,
+        "p95": 1.8,
+        "p99": 1.8,
+        "worst": 1.8,
+        "samples": 120
+      }
+    }
+  },
+  "C": {
+    "fps": 35.4,
+    "totalFramesMeasured": 120,
+    "windowSamples": 120,
+    "buckets": {
+      "over16ms": 120,
+      "over33ms": 60,
+      "over50ms": 0,
+      "over100ms": 0,
+      "pctOver16ms": 100,
+      "pctOver33ms": 50,
+      "pctOver50ms": 0,
+      "pctOver100ms": 0
+    },
+    "stats": {
+      "totalFrameMs": {
+        "avg": 28.24,
+        "median": 34.3,
+        "p95": 37.1,
+        "p99": 37.3,
+        "worst": 37.3,
+        "samples": 120
+      },
+      "faceMs": {
+        "avg": 10.23,
+        "median": 20.4,
+        "p95": 20.5,
+        "p99": 20.5,
+        "worst": 20.5,
+        "samples": 120
+      },
+      "poseMs": {
+        "avg": 8.57,
+        "median": 0,
+        "p95": 34.3,
+        "p99": 34.3,
+        "worst": 34.3,
+        "samples": 120
+      },
+      "handsMs": {
+        "avg": 9.2,
+        "median": 0,
+        "p95": 36.8,
+        "p99": 36.9,
+        "worst": 36.9,
+        "samples": 120
+      },
+      "trackingMs": {
+        "avg": 0.02,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.1,
+        "samples": 120
+      },
+      "assignmentMs": {
+        "avg": 0.02,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.3,
+        "samples": 120
+      },
+      "avatarUpdateMs": {
+        "avg": 0.05,
+        "median": 0,
+        "p95": 0.2,
+        "p99": 0.2,
+        "worst": 0.3,
+        "samples": 120
+      },
+      "expressionMs": {
+        "avg": 0.4,
+        "median": 0.4,
+        "p95": 0.4,
+        "p99": 0.4,
+        "worst": 0.4,
+        "samples": 120
+      },
+      "bodyRetargetMs": {
+        "avg": 1.2,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "handRetargetMs": {
+        "avg": 0.8,
+        "median": 0.8,
+        "p95": 0.8,
+        "p99": 0.8,
+        "worst": 0.8,
+        "samples": 120
+      },
+      "physicsMs": {
+        "avg": 1.14,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "framingMs": {
+        "avg": 0.01,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.1,
+        "samples": 120
+      },
+      "renderMs": {
+        "avg": 0.55,
+        "median": 0.1,
+        "p95": 1.8,
+        "p99": 1.8,
+        "worst": 1.8,
+        "samples": 120
+      }
+    }
+  },
+  "D": {
+    "fps": 35,
+    "totalFramesMeasured": 120,
+    "windowSamples": 120,
+    "buckets": {
+      "over16ms": 120,
+      "over33ms": 60,
+      "over50ms": 1,
+      "over100ms": 0,
+      "pctOver16ms": 100,
+      "pctOver33ms": 50,
+      "pctOver50ms": 0.8,
+      "pctOver100ms": 0
+    },
+    "stats": {
+      "totalFrameMs": {
+        "avg": 28.57,
+        "median": 34.5,
+        "p95": 37.3,
+        "p99": 37.7,
+        "worst": 55,
+        "samples": 120
+      },
+      "faceMs": {
+        "avg": 10.23,
+        "median": 20.4,
+        "p95": 20.5,
+        "p99": 20.5,
+        "worst": 20.5,
+        "samples": 120
+      },
+      "poseMs": {
+        "avg": 8.57,
+        "median": 0,
+        "p95": 34.3,
+        "p99": 34.3,
+        "worst": 34.3,
+        "samples": 120
+      },
+      "handsMs": {
+        "avg": 9.21,
+        "median": 0,
+        "p95": 36.9,
+        "p99": 36.9,
+        "worst": 36.9,
+        "samples": 120
+      },
+      "trackingMs": {
+        "avg": 0.06,
+        "median": 0,
+        "p95": 0.2,
+        "p99": 0.3,
+        "worst": 0.3,
+        "samples": 120
+      },
+      "assignmentMs": {
+        "avg": 0.01,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.1,
+        "samples": 120
+      },
+      "avatarUpdateMs": {
+        "avg": 0.04,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.2,
+        "worst": 0.2,
+        "samples": 120
+      },
+      "expressionMs": {
+        "avg": 0.4,
+        "median": 0.4,
+        "p95": 0.4,
+        "p99": 0.4,
+        "worst": 0.4,
+        "samples": 120
+      },
+      "bodyRetargetMs": {
+        "avg": 1.2,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "handRetargetMs": {
+        "avg": 0.8,
+        "median": 0.8,
+        "p95": 0.8,
+        "p99": 0.8,
+        "worst": 0.8,
+        "samples": 120
+      },
+      "physicsMs": {
+        "avg": 1.11,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "framingMs": {
+        "avg": 0.03,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.2,
+        "worst": 0.2,
+        "samples": 120
+      },
+      "renderMs": {
+        "avg": 0.39,
+        "median": 0.2,
+        "p95": 0.4,
+        "p99": 1.8,
+        "worst": 20.6,
+        "samples": 120
+      }
+    }
+  },
+  "E": {
+    "fps": 30,
+    "totalFramesMeasured": 120,
+    "windowSamples": 120,
+    "buckets": {
+      "over16ms": 120,
+      "over33ms": 61,
+      "over50ms": 0,
+      "over100ms": 0,
+      "pctOver16ms": 100,
+      "pctOver33ms": 50.8,
+      "pctOver50ms": 0,
+      "pctOver100ms": 0
+    },
+    "stats": {
+      "totalFrameMs": {
+        "avg": 33.3,
+        "median": 42.3,
+        "p95": 48.5,
+        "p99": 48.5,
+        "worst": 48.8,
+        "samples": 120
+      },
+      "faceMs": {
+        "avg": 10.23,
+        "median": 20.4,
+        "p95": 20.5,
+        "p99": 20.5,
+        "worst": 20.5,
+        "samples": 120
+      },
+      "poseMs": {
+        "avg": 10.5,
+        "median": 0,
+        "p95": 42,
+        "p99": 42,
+        "worst": 42,
+        "samples": 120
+      },
+      "handsMs": {
+        "avg": 12,
+        "median": 0,
+        "p95": 48,
+        "p99": 48,
+        "worst": 48,
+        "samples": 120
+      },
+      "trackingMs": {
+        "avg": 0.06,
+        "median": 0.1,
+        "p95": 0.2,
+        "p99": 0.2,
+        "worst": 0.6,
+        "samples": 120
+      },
+      "assignmentMs": {
+        "avg": 0.02,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.2,
+        "samples": 120
+      },
+      "avatarUpdateMs": {
+        "avg": 0.05,
+        "median": 0.1,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.2,
+        "samples": 120
+      },
+      "expressionMs": {
+        "avg": 0.4,
+        "median": 0.4,
+        "p95": 0.4,
+        "p99": 0.4,
+        "worst": 0.4,
+        "samples": 120
+      },
+      "bodyRetargetMs": {
+        "avg": 1.2,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "handRetargetMs": {
+        "avg": 0.8,
+        "median": 0.8,
+        "p95": 0.8,
+        "p99": 0.8,
+        "worst": 0.8,
+        "samples": 120
+      },
+      "physicsMs": {
+        "avg": 1.14,
+        "median": 1.2,
+        "p95": 1.2,
+        "p99": 1.2,
+        "worst": 1.2,
+        "samples": 120
+      },
+      "framingMs": {
+        "avg": 0.02,
+        "median": 0,
+        "p95": 0.1,
+        "p99": 0.1,
+        "worst": 0.2,
+        "samples": 120
+      },
+      "renderMs": {
+        "avg": 0.37,
+        "median": 0.3,
+        "p95": 0.4,
+        "p99": 0.4,
+        "worst": 12.7,
+        "samples": 120
+      }
+    }
+  }
+}

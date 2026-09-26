@@ -237,12 +237,6 @@ export class AvatarCache {
       entry.lastUsed = Date.now();
       if (entry.instance) {
         entry.instance.visible = false;
-        if (typeof entry.instance.resetPoseAndHands === 'function') {
-          entry.instance.resetPoseAndHands();
-        }
-        if (typeof entry.instance.resetAllInfluences === 'function') {
-          entry.instance.resetAllInfluences();
-        }
       }
     }
 

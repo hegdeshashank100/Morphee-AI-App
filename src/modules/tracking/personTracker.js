@@ -131,8 +131,10 @@ export class TrackedPerson {
     // Lower confidence proportionally to missed frames
     this.confidence = Math.max(0.2, 1.0 - (this.missedFrames * 0.05));
     this.face = null;
-    this.pose = null;
-    this.hands = [];
+    if (this.missedFrames > 5) {
+      this.pose = null;
+      this.hands = [];
+    }
   }
 
   /**
@@ -453,12 +455,26 @@ export class PersonTracker {
    * @private
    */
   _associatePoses(bodyResult) {
-    if (!bodyResult || !Array.isArray(bodyResult.poses) || bodyResult.poses.length === 0) {
+    if (!bodyResult) return;
+    if (bodyResult.isPoseSkipped === true) {
+      // Pose inference was skipped on this frame by adaptive scheduling; preserve existing poses
       return;
     }
 
-    const availablePoses = [...bodyResult.poses];
+    const availablePoses = (Array.isArray(bodyResult.poses) && bodyResult.poses.length > 0)
+      ? [...bodyResult.poses]
+      : [];
+
     const tracksList = Array.from(this.tracks.values()).filter(t => t.state !== 'TERMINATED');
+
+    if (availablePoses.length === 0) {
+      for (const track of tracksList) {
+        if (track.state !== 'COASTING' || track.missedFrames > 5) {
+          track.pose = null;
+        }
+      }
+      return;
+    }
 
     for (const track of tracksList) {
       if (availablePoses.length === 0) break;
@@ -481,8 +497,8 @@ export class PersonTracker {
         // Distance to track face centroid
         const dist = Math.hypot(anchorX - track.centroid.x, anchorY - track.centroid.y);
 
-        // Spatial association gate (head must be within 0.35 of upper torso)
-        if (dist < 0.35 && dist < minDistance) {
+        // Spatial association gate (head must be within 0.38 of upper torso)
+        if (dist < 0.38 && dist < minDistance) {
           minDistance = dist;
           bestPoseIndex = p;
         }
@@ -495,7 +511,7 @@ export class PersonTracker {
           landmarks: matchedPose.landmarks,
           worldLandmarks: matchedPose.worldLandmarks
         };
-      } else if (track.state !== 'COASTING') {
+      } else if (track.state !== 'COASTING' || track.missedFrames > 5) {
         track.pose = null;
       }
     }
@@ -521,10 +537,12 @@ export class PersonTracker {
     const availableHands = Array.isArray(bodyResult.hands) ? [...bodyResult.hands] : [];
     const activeTracks = Array.from(this.tracks.values()).filter(t => t.state !== 'TERMINATED');
 
-    // If hand inference explicitly ran but returned 0 hands, clear hands
+    // If hand inference explicitly ran but returned 0 hands, clear hands (except during coasting grace period)
     if (availableHands.length === 0) {
       for (const track of activeTracks) {
-        track.hands = [];
+        if (track.state !== 'COASTING' || track.missedFrames > 5) {
+          track.hands = [];
+        }
       }
       return;
     }

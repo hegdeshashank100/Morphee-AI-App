@@ -55,22 +55,38 @@ export function detectGPU() {
     info.isCudaCapable = true;
     info.isHardwareAccelerated = true;
     info.delegate = 'GPU';
-    info.summary = `NVIDIA GPU detected — CUDA acceleration active.`;
+    info.backend = info.webglVersion;
+    info.summary = `NVIDIA GPU active — WebGL / MediaPipe GPU acceleration enabled.`;
   } else if (rendererLower.includes('amd') || rendererLower.includes('radeon')) {
     info.isHardwareAccelerated = true;
     info.delegate = 'GPU';
-    info.summary = `AMD GPU detected — hardware acceleration active.`;
+    info.backend = info.webglVersion;
+    info.summary = `AMD GPU detected — WebGL / MediaPipe GPU acceleration enabled.`;
   } else if (rendererLower.includes('intel')) {
     info.isHardwareAccelerated = true;
     info.delegate = 'GPU';
-    info.summary = `Intel GPU detected — hardware acceleration active.`;
+    info.backend = info.webglVersion;
+    info.summary = `Intel GPU detected — WebGL / MediaPipe GPU acceleration enabled.`;
   } else if (rendererLower.includes('apple') || rendererLower.includes('m1') || rendererLower.includes('m2') || rendererLower.includes('m3')) {
     info.isHardwareAccelerated = true;
     info.delegate = 'GPU';
-    info.summary = `Apple Silicon detected — Metal acceleration active.`;
+    info.backend = info.webglVersion;
+    info.summary = `Apple Silicon detected — Metal / WebGL GPU acceleration enabled.`;
   } else {
-    info.delegate = 'GPU'; // Still try GPU delegate in WebGL context
+    info.isHardwareAccelerated = !!gl;
+    info.delegate = gl ? 'GPU' : 'CPU';
+    info.backend = info.webglVersion;
     info.summary = `GPU: ${info.renderer}`;
+  }
+
+  // Phase 16: Explicitly release the ephemeral WebGL context to prevent resource leaks
+  try {
+    const loseContextExt = gl.getExtension('WEBGL_lose_context');
+    if (loseContextExt) {
+      loseContextExt.loseContext();
+    }
+  } catch (err) {
+    // Context cleanup failure is non-fatal
   }
 
   // Clean up the temporary canvas
@@ -90,18 +106,14 @@ export function populateGPUInfo(gpuInfo) {
   const gpuIcon = document.getElementById('gpuIcon');
 
   if (gpuName) {
-    if (gpuInfo.isNvidia) {
-      gpuName.textContent = 'NVIDIA CUDA Active';
-      gpuDetail.textContent = gpuInfo.renderer;
-      gpuIcon.textContent = '🟢';
-      if (gpuStatus) gpuStatus.classList.add('nvidia');
-    } else if (gpuInfo.isHardwareAccelerated) {
-      gpuName.textContent = 'GPU Accelerated';
-      gpuDetail.textContent = gpuInfo.renderer;
-      gpuIcon.textContent = '⚡';
+    if (gpuInfo.isHardwareAccelerated) {
+      gpuName.textContent = 'GPU ACCELERATION ACTIVE';
+      gpuDetail.textContent = `${gpuInfo.renderer} (${gpuInfo.delegate || 'GPU'})`;
+      gpuIcon.textContent = gpuInfo.isNvidia ? '🟢' : '⚡';
+      if (gpuStatus && gpuInfo.isNvidia) gpuStatus.classList.add('nvidia');
     } else {
-      gpuName.textContent = 'CPU Only';
-      gpuDetail.textContent = 'No GPU acceleration';
+      gpuName.textContent = 'CPU FALLBACK';
+      gpuDetail.textContent = 'Hardware acceleration unavailable';
       gpuIcon.textContent = '🔴';
     }
   }
@@ -110,7 +122,7 @@ export function populateGPUInfo(gpuInfo) {
   const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
   set('gpuInfoRenderer', gpuInfo.renderer);
   set('gpuInfoVendor', gpuInfo.vendor);
-  set('gpuInfoWebGL', gpuInfo.webglVersion);
+  set('gpuInfoWebGL', `${gpuInfo.webglVersion} (${gpuInfo.delegate} Delegate)`);
   set('gpuInfoMaxTex', gpuInfo.maxTextureSize ? `${gpuInfo.maxTextureSize}px` : 'N/A');
-  set('gpuInfoCuda', gpuInfo.isCudaCapable ? '✅ CUDA Ready' : gpuInfo.isHardwareAccelerated ? '✅ HW Accel' : '❌ Not Available');
+  set('gpuInfoCuda', gpuInfo.isHardwareAccelerated ? `Active (${gpuInfo.delegate || 'GPU'})` : 'Disabled (CPU)');
 }

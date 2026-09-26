@@ -62,14 +62,6 @@ export class AvatarAssignmentManager {
   }
 
   /**
-   * Official privacy & non-biological presentation heuristic disclaimer.
-   * @returns {string}
-   */
-  getPrivacyDisclaimer() {
-    return 'Optional body-proportion heuristic for assigning avatars based on shoulder-to-torso geometry. Does not claim or perform biological-sex detection or biometric identification.';
-  }
-
-  /**
    * Sets the avatar selection mode.
    * @param {'manual'|'auto_category'} mode
    */
@@ -225,17 +217,14 @@ export class AvatarAssignmentManager {
       const preferred = (this.selectionMode === 'auto_category' && record.preferredCategory)
         ? record.preferredCategory
         : null;
-      const allocation = this._allocateUniqueAvatar(preferred);
-      const freedAvatarId = typeof allocation === 'string' ? allocation : allocation?.avatarId;
+      const freedAvatarId = this._allocateUniqueAvatar(preferred);
       if (freedAvatarId) {
         record.avatarId = freedAvatarId;
         record.assignmentState = ASSIGNMENT_STATE.ASSIGNED;
-        record.selectionReason = allocation?.reason || 'MANUAL';
         newlyAssigned.push({
           trackId: waitingTrackId,
           avatarId: freedAvatarId,
-          assignmentState: ASSIGNMENT_STATE.ASSIGNED,
-          selectionReason: record.selectionReason
+          assignmentState: ASSIGNMENT_STATE.ASSIGNED
         });
       }
     }
@@ -260,28 +249,20 @@ export class AvatarAssignmentManager {
         }
       }
 
-      const allocation = this._allocateUniqueAvatar(preferredCategory);
-      const assignedAvatarId = typeof allocation === 'string' ? allocation : allocation?.avatarId;
-      const selectionReason = allocation?.reason || (preferredCategory ? 'CATEGORY_MATCH' : 'MANUAL');
-
+      const assignedAvatarId = this._allocateUniqueAvatar(preferredCategory);
       if (assignedAvatarId) {
         // Unique avatar successfully allocated
         this._trackAssignments.set(track.trackId, {
           avatarId: assignedAvatarId,
           assignmentState: ASSIGNMENT_STATE.ASSIGNED,
           preferredCategory,
-          estimatedCategory: estimated?.category || 'neutral',
-          category: estimated?.category || 'neutral',
-          categoryConfidence: estimated?.confidence || 0,
-          ratio: estimated?.ratio || 0,
-          selectionReason
+          estimatedCategory: estimated?.category || null
         });
         this._trackOrder.push(track.trackId);
         newlyAssigned.push({
           trackId: track.trackId,
           avatarId: assignedAvatarId,
-          assignmentState: ASSIGNMENT_STATE.ASSIGNED,
-          selectionReason
+          assignmentState: ASSIGNMENT_STATE.ASSIGNED
         });
       } else {
         // NO UNIQUE AVATAR AVAILABLE: Enter explicit WAITING state (NO DUPLICATION!)
@@ -289,11 +270,7 @@ export class AvatarAssignmentManager {
           avatarId: null,
           assignmentState: ASSIGNMENT_STATE.WAITING_FOR_UNIQUE_AVATAR,
           preferredCategory,
-          estimatedCategory: estimated?.category || 'neutral',
-          category: estimated?.category || 'neutral',
-          categoryConfidence: estimated?.confidence || 0,
-          ratio: estimated?.ratio || 0,
-          selectionReason: 'NO_AVATARS_AVAILABLE'
+          estimatedCategory: estimated?.category || null
         });
         this._trackOrder.push(track.trackId);
         waiting.push({
@@ -420,44 +397,27 @@ export class AvatarAssignmentManager {
 
     if (availableDefs.length === 0) {
       // No unique avatar available: NO DUPLICATION POLICY
-      return { avatarId: null, reason: 'NO_AVATARS_AVAILABLE' };
+      return null;
     }
 
     // 1. If preferredCategory specified, look for matching presentation/gender
     if (preferredCategory && (preferredCategory === 'female' || preferredCategory === 'male')) {
-      const isMatch = (d) => {
-        const p = (d.presentation || '').toLowerCase();
-        const g = (d.gender || '').toLowerCase();
-        if (preferredCategory === 'female') {
-          return p === 'female' || p === 'female-presenting' || g === 'female';
-        }
-        if (preferredCategory === 'male') {
-          return p === 'male' || p === 'male-presenting' || g === 'male';
-        }
-        return false;
-      };
-
-      const match = availableDefs.find(isMatch);
+      const match = availableDefs.find(
+        d => (d.presentation === preferredCategory || d.gender === preferredCategory)
+      );
       if (match) {
-        return { avatarId: match.id, reason: 'CATEGORY_MATCH' };
+        return match.id;
       }
-      // Log category pool exhaustion and continue to fallback
-      console.info(`[AvatarAssignmentManager] Category pool exhausted for '${preferredCategory}'; falling back to next available unique avatar.`);
+      // If no category match, proceed to general allocation below (fallback)
     }
 
     // 2. If default avatar is unassigned, assign it
     if (!assignedIds.has(this.defaultAvatarId)) {
-      return {
-        avatarId: this.defaultAvatarId,
-        reason: preferredCategory ? 'CATEGORY_POOL_EXHAUSTED_DEFAULT_FALLBACK' : 'DEFAULT_ASSIGNMENT'
-      };
+      return this.defaultAvatarId;
     }
 
     // 3. Otherwise assign the first available unique avatar in registry order
-    return {
-      avatarId: availableDefs[0].id,
-      reason: preferredCategory ? 'CATEGORY_POOL_EXHAUSTED_NEXT_AVAILABLE' : 'NEXT_AVAILABLE'
-    };
+    return availableDefs[0].id;
   }
 
   /**
@@ -493,21 +453,9 @@ export class AvatarAssignmentManager {
 
     for (const [trackId, record] of this._trackAssignments.entries()) {
       if (record.avatarId) {
-        activeAssigned.push({
-          trackId,
-          avatarId: record.avatarId,
-          state: record.assignmentState,
-          category: record.category || 'neutral',
-          categoryConfidence: record.categoryConfidence || 0,
-          selectionReason: record.selectionReason || 'MANUAL'
-        });
+        activeAssigned.push({ trackId, avatarId: record.avatarId, state: record.assignmentState });
       } else {
-        waitingTracks.push({
-          trackId,
-          state: record.assignmentState,
-          category: record.category || 'neutral',
-          categoryConfidence: record.categoryConfidence || 0
-        });
+        waitingTracks.push({ trackId, state: record.assignmentState });
       }
     }
 

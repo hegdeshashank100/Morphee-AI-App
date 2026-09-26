@@ -59,6 +59,30 @@ export const TIER_CONFIG = {
   }
 };
 
+// Pre-allocated circular ring buffer for O(1) sample push without GC churn
+class FastRing {
+  constructor(capacity) {
+    this.capacity = capacity;
+    this.data = new Float32Array(capacity);
+    this.count = 0;
+    this.idx = 0;
+  }
+  push(val) {
+    this.data[this.idx] = val;
+    this.idx = (this.idx + 1) % this.capacity;
+    if (this.count < this.capacity) this.count++;
+  }
+  mean() {
+    if (this.count === 0) return 0;
+    let s = 0;
+    for (let i = 0; i < this.count; i++) s += this.data[i];
+    return s / this.count;
+  }
+  get length() {
+    return this.count;
+  }
+}
+
 export class PerformanceManager {
   /**
    * @param {Object} [options]
@@ -79,16 +103,16 @@ export class PerformanceManager {
     this.shortWindowSize = options.shortWindowSize ?? 10;
     this.mediumWindowSize = options.mediumWindowSize ?? 45;
 
-    // Circular sample buffers for metrics
-    this._fpsHistory = [];
-    this._frameTimeHistory = [];
-    this._faceTimeHistory = [];
-    this._poseTimeHistory = [];
-    this._handTimeHistory = [];
-    this._trackingTimeHistory = [];
-    this._framingTimeHistory = [];
-    this._renderTimeHistory = [];
-    this._avatarUpdateTimeHistory = [];
+    // Fast circular sample buffers for metrics (zero per-frame allocations)
+    this._fpsHistory = new FastRing(this.mediumWindowSize);
+    this._frameTimeHistory = new FastRing(this.mediumWindowSize);
+    this._faceTimeHistory = new FastRing(this.shortWindowSize);
+    this._poseTimeHistory = new FastRing(this.shortWindowSize);
+    this._handTimeHistory = new FastRing(this.shortWindowSize);
+    this._trackingTimeHistory = new FastRing(this.shortWindowSize);
+    this._framingTimeHistory = new FastRing(this.shortWindowSize);
+    this._renderTimeHistory = new FastRing(this.shortWindowSize);
+    this._avatarUpdateTimeHistory = new FastRing(this.shortWindowSize);
 
     // Hysteresis counters & cooldown
     this.degradeHoldFrames = options.degradeHoldFrames ?? 30;
@@ -213,45 +237,27 @@ export class PerformanceManager {
     this.frameIndex++;
     const now = sample.timestampMs ?? performance.now();
 
-    // Store raw samples
-    if (typeof sample.fps === 'number' && sample.fps > 0) {
-      this._pushSample(this._fpsHistory, sample.fps, this.mediumWindowSize);
-    }
-    if (typeof sample.frameTimeMs === 'number' && sample.frameTimeMs > 0) {
-      this._pushSample(this._frameTimeHistory, sample.frameTimeMs, this.mediumWindowSize);
-    }
-    if (typeof sample.faceInferMs === 'number') {
-      this._pushSample(this._faceTimeHistory, sample.faceInferMs, this.shortWindowSize);
-    }
-    if (typeof sample.poseInferMs === 'number') {
-      this._pushSample(this._poseTimeHistory, sample.poseInferMs, this.shortWindowSize);
-    }
-    if (typeof sample.handInferMs === 'number') {
-      this._pushSample(this._handTimeHistory, sample.handInferMs, this.shortWindowSize);
-    }
-    if (typeof sample.trackingMs === 'number') {
-      this._pushSample(this._trackingTimeHistory, sample.trackingMs, this.shortWindowSize);
-    }
-    if (typeof sample.framingMs === 'number') {
-      this._pushSample(this._framingTimeHistory, sample.framingMs, this.shortWindowSize);
-    }
-    if (typeof sample.avatarUpdateMs === 'number') {
-      this._pushSample(this._avatarUpdateTimeHistory, sample.avatarUpdateMs, this.shortWindowSize);
-    }
-    if (typeof sample.renderMs === 'number') {
-      this._pushSample(this._renderTimeHistory, sample.renderMs, this.shortWindowSize);
-    }
+    // Store raw samples using O(1) circular buffers
+    if (typeof sample.fps === 'number' && sample.fps > 0) this._fpsHistory.push(sample.fps);
+    if (typeof sample.frameTimeMs === 'number' && sample.frameTimeMs > 0) this._frameTimeHistory.push(sample.frameTimeMs);
+    if (typeof sample.faceInferMs === 'number') this._faceTimeHistory.push(sample.faceInferMs);
+    if (typeof sample.poseInferMs === 'number') this._poseTimeHistory.push(sample.poseInferMs);
+    if (typeof sample.handInferMs === 'number') this._handTimeHistory.push(sample.handInferMs);
+    if (typeof sample.trackingMs === 'number') this._trackingTimeHistory.push(sample.trackingMs);
+    if (typeof sample.framingMs === 'number') this._framingTimeHistory.push(sample.framingMs);
+    if (typeof sample.avatarUpdateMs === 'number') this._avatarUpdateTimeHistory.push(sample.avatarUpdateMs);
+    if (typeof sample.renderMs === 'number') this._renderTimeHistory.push(sample.renderMs);
 
     // Compute rolling averages
-    this.metrics.fps = this._mean(this._fpsHistory);
-    this.metrics.frameTimeMs = this._mean(this._frameTimeHistory);
-    this.metrics.faceInferMs = this._mean(this._faceTimeHistory);
-    this.metrics.poseInferMs = this._mean(this._poseTimeHistory);
-    this.metrics.handInferMs = this._mean(this._handTimeHistory);
-    this.metrics.trackingMs = this._mean(this._trackingTimeHistory);
-    this.metrics.framingMs = this._mean(this._framingTimeHistory);
-    this.metrics.avatarUpdateMs = this._mean(this._avatarUpdateTimeHistory);
-    this.metrics.renderMs = this._mean(this._renderTimeHistory);
+    this.metrics.fps = this._fpsHistory.mean();
+    this.metrics.frameTimeMs = this._frameTimeHistory.mean();
+    this.metrics.faceInferMs = this._faceTimeHistory.mean();
+    this.metrics.poseInferMs = this._poseTimeHistory.mean();
+    this.metrics.handInferMs = this._handTimeHistory.mean();
+    this.metrics.trackingMs = this._trackingTimeHistory.mean();
+    this.metrics.framingMs = this._framingTimeHistory.mean();
+    this.metrics.avatarUpdateMs = this._avatarUpdateTimeHistory.mean();
+    this.metrics.renderMs = this._renderTimeHistory.mean();
     this.metrics.totalFrameTimeMs = (
       this.metrics.faceInferMs +
       this.metrics.poseInferMs +
@@ -281,8 +287,8 @@ export class PerformanceManager {
     // Cooldown check: prevent transitions within minCooldownMs
     if (now - this._lastTierChangeMs < this.minCooldownMs) return;
 
-    // Single-Person Fast Path: If 1 person and FPS >= target * 0.95, maintain HIGH/ULTRA
-    if (this.metrics.activePeople <= 1 && this.metrics.fps >= this.targetFps * 0.92) {
+    // Single-Person Fast Path: If 1 person and FPS >= 24, maintain HIGH
+    if (this.metrics.activePeople <= 1 && this.metrics.fps >= 24) {
       if (this.currentTier !== PERFORMANCE_TIERS.HIGH && this.currentTier !== PERFORMANCE_TIERS.ULTRA) {
         this._setTier(PERFORMANCE_TIERS.HIGH, 'Single-person fast path healthy');
       }
@@ -292,8 +298,8 @@ export class PerformanceManager {
     }
 
     const currentFps = this.metrics.fps;
-    const degradeThreshold = this.targetFps * 0.75; // e.g. < 45 FPS for 60 target
-    const recoveryThreshold = this.targetFps * 0.90; // e.g. > 54 FPS for 60 target
+    const degradeThreshold = Math.min(20, this.targetFps * 0.40); // Only degrade below 20 FPS
+    const recoveryThreshold = Math.min(32, this.targetFps * 0.60); // Recover when >= 32 FPS
 
     // Overload check (sustained for degradeHoldFrames)
     if (currentFps < degradeThreshold) {
@@ -393,39 +399,82 @@ export class PerformanceManager {
 
   /**
    * Queries which inference tasks should run on the given frameIndex.
-   * Implements staggered / alternating cadence.
+   * Implements strictly staggered / interleaved cadence so heavy models NEVER
+   * execute in the same animation frame, preventing synchronous main-thread stalls.
    *
    * @param {number} [customIndex]
+   * @param {Object} [options]
+   * @param {boolean} [options.bodyTracking=true]
+   * @param {boolean} [options.handTracking=true]
    * @returns {{ face: boolean, pose: boolean, hands: boolean }}
    */
-  getSchedule(customIndex = null) {
+  getSchedule(customIndex = null, options = {}) {
     const idx = customIndex ?? this.frameIndex;
     const config = this.getConfig();
+    const hasPose = options.bodyTracking !== false;
+    const hasHands = options.handTracking !== false;
 
-    // 1. Face inference cadence (highest priority)
-    const runFace = (idx % config.faceCadence === 0);
-
-    // 2. Pose inference cadence
-    // In MEDIUM: Pose runs on even frames (idx % 2 === 0)
-    // In LOW: Pose runs on (idx % 3 === 0)
-    const runPose = (idx % config.poseCadence === 0);
-
-    // 3. Hand inference cadence
-    // In MEDIUM: Hands run on odd frames (idx % 2 === 1) to perfectly alternate with Pose!
-    // In LOW: Hands run on (idx % 3 === 1) to avoid co-occurring with Pose!
-    let runHands = false;
-    if (config.handCadence === 1) {
-      runHands = true;
-    } else if (config.handCadence === 2) {
-      runHands = (idx % 2 === 1); // Alternates with Pose (even)
-    } else {
-      runHands = (idx % config.handCadence === 1); // Staggered offset
+    // Case 1: Face only (body and hands disabled)
+    if (!hasPose && !hasHands) {
+      return {
+        face: (idx % config.faceCadence === 0),
+        pose: false,
+        hands: false
+      };
     }
 
+    // Case 2: Face + Pose only (hands disabled)
+    if (hasPose && !hasHands) {
+      if (this.currentTier === PERFORMANCE_TIERS.ULTRA) {
+        return { face: true, pose: true, hands: false };
+      }
+      // Strict alternation: Even frames = Face, Odd frames = Pose
+      return {
+        face: (idx % 2 === 0),
+        pose: (idx % 2 === 1),
+        hands: false
+      };
+    }
+
+    // Case 3: Face + Hands only (pose disabled)
+    if (!hasPose && hasHands) {
+      if (this.currentTier === PERFORMANCE_TIERS.ULTRA) {
+        return { face: true, pose: false, hands: true };
+      }
+      return {
+        face: (idx % 2 === 0),
+        pose: false,
+        hands: (idx % 2 === 1)
+      };
+    }
+
+    // Case 4: Full tracking (Face + Pose + Hands)
+    if (this.currentTier === PERFORMANCE_TIERS.ULTRA) {
+      return { face: true, pose: true, hands: true };
+    }
+
+    // In HIGH / MEDIUM: 4-frame interleaved round-robin:
+    // Slot 0: Face (20ms)
+    // Slot 1: Pose (35ms)
+    // Slot 2: Face (20ms)
+    // Slot 3: Hands (35ms)
+    // -> Face updates at 30Hz, Pose at 15Hz, Hands at 15Hz
+    // -> NEVER do multiple heavy models run in the same frame!
+    if (this.currentTier === PERFORMANCE_TIERS.HIGH || this.currentTier === PERFORMANCE_TIERS.MEDIUM) {
+      const slot = idx % 4;
+      return {
+        face: (slot === 0 || slot === 2),
+        pose: (slot === 1),
+        hands: (slot === 3)
+      };
+    }
+
+    // In LOW tier: 6-frame cycle with render-only rest frames
+    const slot = idx % 6;
     return {
-      face: runFace,
-      pose: runPose,
-      hands: runHands
+      face: (slot === 0 || slot === 4),
+      pose: (slot === 2),
+      hands: (slot === 5)
     };
   }
 

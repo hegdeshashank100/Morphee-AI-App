@@ -7,6 +7,7 @@ export class BodyTracker {
     this.handLandmarker = null;
     this.maxPeople = 4;
     this.delegate = 'GPU';
+    this.minHandDetectionConfidence = 0.4;
   }
 
   /**
@@ -36,9 +37,9 @@ export class BodyTracker {
       baseOptions: { modelAssetPath: handModelPath, delegate: this.delegate },
       runningMode: 'VIDEO',
       numHands: numHands,
-      minHandDetectionConfidence: 0.5,
-      minHandPresenceConfidence: 0.5,
-      minTrackingConfidence: 0.5
+      minHandDetectionConfidence: 0.4,
+      minHandPresenceConfidence: 0.4,
+      minTrackingConfidence: 0.4
     });
   }
 
@@ -108,8 +109,41 @@ export class BodyTracker {
       throw new Error('BodyTracker not initialized — call init() first.');
     }
 
-    const rawPose = (runPose && this.poseLandmarker) ? this.poseLandmarker.detectForVideo(video, timestampMs) : null;
-    const rawHands = (runHands && this.handLandmarker) ? this.handLandmarker.detectForVideo(video, timestampMs) : null;
+    let poseInferMs = 0;
+    let handInferMs = 0;
+    let rawPose = null;
+    let rawHands = null;
+
+    if (runPose && this.poseLandmarker) {
+      if (this._lastPoseTimestamp === timestampMs && this._lastRawPose) {
+        rawPose = this._lastRawPose;
+      } else {
+        const t0 = performance.now();
+        rawPose = this.poseLandmarker.detectForVideo(video, timestampMs);
+        poseInferMs = performance.now() - t0;
+        this._lastPoseTimestamp = timestampMs;
+        this._lastRawPose = rawPose;
+      }
+    } else if (this._lastRawPose) {
+      rawPose = this._lastRawPose;
+    }
+
+    if (runHands && this.handLandmarker) {
+      if (this._lastHandTimestamp === timestampMs && this._lastRawHands) {
+        rawHands = this._lastRawHands;
+      } else {
+        const t0 = performance.now();
+        rawHands = this.handLandmarker.detectForVideo(video, timestampMs);
+        handInferMs = performance.now() - t0;
+        this._lastHandTimestamp = timestampMs;
+        this._lastRawHands = rawHands;
+      }
+    } else if (this._lastRawHands) {
+      rawHands = this._lastRawHands;
+    }
+
+    this.lastPoseInferMs = poseInferMs;
+    this.lastHandInferMs = handInferMs;
 
     // ── Safe Extraction of Poses ──
     const rawPoseLandmarks = (rawPose && Array.isArray(rawPose.landmarks)) ? rawPose.landmarks : [];
@@ -195,6 +229,8 @@ export class BodyTracker {
       handCount,
       poseConfidence,
       handConfidence,
+      poseInferMs,
+      handInferMs,
       // Compatibility aliases:
       pose: legacyPose,
       handsRaw: legacyHands

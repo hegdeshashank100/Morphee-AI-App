@@ -15,23 +15,19 @@ function createWindow () {
     }
   })
 
-  // Enable hardware acceleration flags for best GPU performance
-  app.commandLine.appendSwitch('enable-gpu-rasterization')
-  app.commandLine.appendSwitch('enable-zero-copy')
-  app.commandLine.appendSwitch('ignore-gpu-blocklist')
-
   const path = require('path')
   if (app.isPackaged) {
     win.loadFile(path.join(__dirname, 'dist', 'index.html'))
   } else {
-    // Since we are running in dev mode with Vite, load the localhost URL
     win.loadURL('http://localhost:5173')
   }
 }
 
-// Force hardware acceleration
-app.commandLine.appendSwitch('enable-gpu-rasterization')
-app.commandLine.appendSwitch('ignore-gpu-blocklist')
+// Force hardware acceleration and discrete NVIDIA GPU on dual-GPU laptops
+app.commandLine.appendSwitch('force_high_performance_gpu');
+app.commandLine.appendSwitch('enable-gpu-rasterization');
+app.commandLine.appendSwitch('enable-zero-copy');
+app.commandLine.appendSwitch('ignore-gpu-blocklist');
 
 app.whenReady().then(createWindow)
 

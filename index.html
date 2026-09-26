@@ -34,6 +34,64 @@
     </a>
   </nav>
 
+  <!-- TRACKING CONTROLS (visible only on Live Capture) -->
+  <div class="sidebar-tracking-section" id="sidebarTracking">
+    <div class="section-title">TRACKING</div>
+    <div class="sidebar-tracking-controls">
+      <div class="sidebar-toggle-row">
+        <label for="trackingModeSelect">Mode</label>
+        <select id="trackingModeSelect" class="sidebar-select">
+          <option value="auto" selected>Auto</option>
+          <option value="multi">Multi</option>
+          <option value="single">Single</option>
+        </select>
+      </div>
+      <div class="sidebar-toggle-row">
+        <label for="maxPeopleSelect">Max People</label>
+        <select id="maxPeopleSelect" class="sidebar-select">
+          <option value="1">1</option>
+          <option value="2">2</option>
+          <option value="4" selected>4</option>
+          <option value="6">6</option>
+          <option value="8">8</option>
+        </select>
+      </div>
+      <div class="sidebar-toggle-row">
+        <label for="targetFpsSelect">Target FPS</label>
+        <select id="targetFpsSelect" class="sidebar-select">
+          <option value="60" selected>60</option>
+          <option value="45">45</option>
+          <option value="30">30</option>
+        </select>
+      </div>
+      <div class="sidebar-toggle-row">
+        <label for="perfModeSelect">Perf Profile</label>
+        <select id="perfModeSelect" class="sidebar-select">
+          <option value="AUTO" selected>Auto</option>
+          <option value="ULTRA">Ultra</option>
+          <option value="HIGH">High</option>
+          <option value="MEDIUM">Medium</option>
+          <option value="LOW">Low</option>
+        </select>
+      </div>
+      <div class="sidebar-toggle-row">
+        <label for="smoothRange">Smoothing</label>
+        <input type="range" id="smoothRange" min="0" max="90" value="55">
+      </div>
+      <div class="sidebar-toggle-row">
+        <label for="poseToggle">Head Pose</label>
+        <input type="checkbox" id="poseToggle" checked>
+      </div>
+      <div class="sidebar-toggle-row">
+        <label for="avatarSelectModeSelect">Avatar Sel.</label>
+        <select id="avatarSelectModeSelect" class="sidebar-select" data-setting="avatarSelectionMode">
+          <option value="manual" selected>Manual</option>
+          <option value="auto_category">Auto Cat.</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
   <!-- SYSTEM & HARDWARE -->
   <div class="sidebar-section">
     <div class="section-title">SYSTEM</div>
@@ -89,37 +147,41 @@
       </div>
     </div>
 
-    <!-- Live Stage Grid -->
-    <div class="live-grid">
-      <!-- Camera Panel -->
-      <div class="card card-camera">
-        <div class="card-header">
-          <h2>Camera Feed</h2>
-          <div class="controls">
-            <button id="startBtn" class="btn-compact">Start Camera</button>
-            <button id="stopBtn" class="secondary btn-compact" disabled>Stop</button>
-          </div>
-        </div>
-        <div class="video-wrap">
-          <video id="webcam" autoplay playsinline muted></video>
-          <canvas id="overlay" class="overlay"></canvas>
-        </div>
-        <div class="status-line" id="statusLine">Idle — click Start Camera to begin.</div>
-      </div>
-
-      <!-- 3D Avatar Stage Panel -->
-      <div class="card card-avatar">
+    <!-- Full-Width 3D Avatar Stage -->
+    <div class="stage-container">
+      <div class="card card-avatar stage-fullwidth">
         <div class="card-header">
           <h2>3D Avatar Output</h2>
           <div class="active-model-pill" id="activeModelPill">Loading…</div>
         </div>
-        <div class="render-wrap">
+        <div class="render-wrap stage-render-wrap">
           <canvas id="renderCanvas"></canvas>
           <!-- Multi-Person Stage HUD Overlay -->
           <div class="stage-hud-overlay" id="stageHudOverlay" role="region" aria-label="Multi-Person Tracking HUD"></div>
+
+          <!-- Avatar Stage Floating Labels Container -->
+          <div class="avatar-stage-labels-container" id="avatarStageLabelsContainer" aria-label="Avatar Stage Labels"></div>
+
+          <!-- Camera Navigator -->
+          <div id="cameraNavigator"></div>
+
           <div class="loading-overlay" id="loadingOverlay">
             <div class="loader-spinner"></div>
             <span>Loading avatar model…</span>
+          </div>
+
+          <!-- PiP Camera Overlay -->
+          <div class="pip-camera" id="pipCamera">
+            <div class="pip-label">CAMERA</div>
+            <div class="pip-video-wrap">
+              <video id="webcam" autoplay playsinline muted></video>
+              <canvas id="overlay" class="overlay"></canvas>
+            </div>
+            <div class="pip-controls">
+              <button id="startBtn" class="pip-btn pip-btn-start">▶ Start</button>
+              <button id="stopBtn" class="pip-btn pip-btn-stop" disabled>■ Stop</button>
+              <span class="pip-status" id="statusLine">Idle</span>
+            </div>
           </div>
         </div>
         <div class="status-line" id="renderStatus">Drag to orbit · scroll to zoom</div>
@@ -199,84 +261,14 @@
           <div class="diag-row"><span>Tracking & Framing</span><span id="dTrackFrame">-- ms</span></div>
           <div class="diag-row"><span>Three.js Render Pass</span><span id="dRenderPass">-- ms</span></div>
         </div>
-        <div class="diag-col">
-          <h3>Rig & Retargeting Audit</h3>
-          <div class="diag-row"><span>Humanoid Rig</span><span id="dRigAudit">Standard VRM</span></div>
-          <div class="diag-row"><span>Hand Tracking</span><span id="dHandTrackSupport">FULL</span></div>
-          <div class="diag-row"><span>Finger Bones</span><span id="dFingerBones">-- / 40</span></div>
-          <div class="diag-row"><span>Hand Decay State</span><span id="dDecayState">Active</span></div>
-        </div>
-        <div class="diag-col">
-          <h3>Auto Presentation Category</h3>
-          <div class="diag-row"><span>Selection Mode</span><span id="dSelectMode">Manual</span></div>
-          <div class="diag-row"><span>Estimated Category</span><span id="dEstCategory">Neutral</span></div>
-          <div class="diag-row"><span>Category Confidence</span><span id="dCategoryConf">--</span></div>
-          <div class="diag-row"><span>Allocation Reason</span><span id="dAllocReason">INITIAL</span></div>
+        <div class="diag-col diag-col-expressions">
+          <h3>Expression Coefficients</h3>
+          <div id="blendList" class="diag-blend-list"></div>
         </div>
       </div>
     </div>
 
-    <!-- Controls Row -->
-    <div class="controls-row">
-      <div class="card compact">
-        <h2>Tracking Controls</h2>
-        <div class="toggle-row">
-          <label for="trackingModeSelect">Tracking mode</label>
-          <select id="trackingModeSelect" class="styled-select">
-            <option value="auto" selected>Auto (1: Single, 2+: Multi)</option>
-            <option value="multi">Multi-Avatar</option>
-            <option value="single">Single Person (Primary only)</option>
-          </select>
-        </div>
-        <div class="toggle-row">
-          <label for="maxPeopleSelect">Max people (faces)</label>
-          <select id="maxPeopleSelect" class="styled-select">
-            <option value="1">1 Person</option>
-            <option value="2">2 People</option>
-            <option value="4" selected>4 People</option>
-            <option value="6">6 People</option>
-            <option value="8">8 People</option>
-          </select>
-        </div>
-        <div class="toggle-row">
-          <label for="targetFpsSelect">Target FPS</label>
-          <select id="targetFpsSelect" class="styled-select">
-            <option value="60" selected>60 FPS</option>
-            <option value="45">45 FPS</option>
-            <option value="30">30 FPS</option>
-          </select>
-        </div>
-        <div class="toggle-row">
-          <label for="perfModeSelect">Performance profile</label>
-          <select id="perfModeSelect" class="styled-select">
-            <option value="AUTO" selected>Auto (Adaptive Quality)</option>
-            <option value="ULTRA">Ultra (Full Fidelity)</option>
-            <option value="HIGH">High</option>
-            <option value="MEDIUM">Medium (Staggered)</option>
-            <option value="LOW">Low (Power Saver)</option>
-          </select>
-        </div>
-        <div class="toggle-row">
-          <label for="smoothRange">Temporal smoothing</label>
-          <input type="range" id="smoothRange" min="0" max="90" value="55">
-        </div>
-        <div class="toggle-row">
-          <label for="poseToggle">Apply head pose</label>
-          <input type="checkbox" id="poseToggle" checked>
-        </div>
-        <div class="toggle-row">
-          <label for="avatarSelectModeSelect" title="Automatic Presentation Category: Optional body-proportion heuristic for assigning avatars. Does not perform biometric identification.">Auto presentation category</label>
-          <select id="avatarSelectModeSelect" class="styled-select" data-setting="avatarSelectionMode">
-            <option value="manual" selected>Manual (Registry Order)</option>
-            <option value="auto_category">Auto Presentation Category</option>
-          </select>
-        </div>
-      </div>
-      <div class="card compact blend-card">
-        <h2>Expression Coefficients</h2>
-        <div id="blendList"></div>
-      </div>
-    </div>
+
   </div>
 
   <!-- ─── VIEW: Avatar Gallery ─── -->
@@ -367,10 +359,10 @@
           <input type="checkbox" id="settingHands" data-setting="handTracking" checked>
         </div>
         <div class="toggle-row">
-          <label title="Automatic Presentation Category: Optional body-proportion heuristic for assigning avatars. Does not perform biometric identification.">Auto presentation category</label>
+          <label>Avatar selection</label>
           <select id="settingAvatarSelection" data-setting="avatarSelectionMode">
             <option value="manual" selected>Manual (Registry Order)</option>
-            <option value="auto_category">Auto Presentation Category</option>
+            <option value="auto_category">Auto Category (Presentation Heuristic)</option>
           </select>
         </div>
       </div>

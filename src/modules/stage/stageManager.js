@@ -44,6 +44,8 @@ export class StageManager {
     this.defaultCamPos = new THREE.Vector3(0, 1.28, 1.85);
     this.defaultCamTarget = new THREE.Vector3(0, 1.18, 0);
     this.camera.position.copy(this.defaultCamPos);
+    this.camera.lookAt(this.defaultCamTarget);
+    this.camera.updateMatrixWorld();
 
     this.renderer = new THREE.WebGLRenderer({
       canvas,
@@ -60,6 +62,7 @@ export class StageManager {
     this.controls.minDistance = 0.5;
     this.controls.maxDistance = 10.0;
     this.controls.target.copy(this.defaultCamTarget);
+    this.controls.update();
 
     this._setupLights();
 
@@ -96,8 +99,20 @@ export class StageManager {
     this._rfLast = performance.now();
     this._rfSmoothed = 0;
     this.lastRenderMs = 0;
+    this.lastPhysicsMs = 0;
     this.onRenderFps = null;
     this._isLoopRunning = false;
+
+    // External camera state (from CameraNavigator)
+    this._cameraState = null;
+
+    // Pre-allocated Set for tick loop (avoids per-frame GC)
+    this._updatedAvatarsSet = new Set();
+
+    // Pre-allocated scratch vectors for multi-avatar framing
+    this._scratchGroupMin = new THREE.Vector3();
+    this._scratchGroupMax = new THREE.Vector3();
+    this._scratchGroupCenter = new THREE.Vector3();
 
     this._resizeHandler = () => this.resize();
     window.addEventListener('resize', this._resizeHandler);
@@ -316,9 +331,6 @@ export class StageManager {
     if (avatar.vrm?.scene) {
       this.scene.remove(avatar.vrm.scene);
       avatar.visible = false;
-      if (typeof avatar.resetPoseAndHands === 'function') {
-        avatar.resetPoseAndHands();
-      }
     }
     this.trackAvatars.delete(trackId);
     this.avatars.delete(`track_${trackId}`);
@@ -454,11 +466,13 @@ export class StageManager {
     }
 
     // ── Multi-Avatar Mode: Layout based on physical horizontal position ──
+    // Synchronize with mirrored camera: left on camera corresponds to left on stage (-X)
     const SPREAD_FACTOR = 2.4;
     const MIN_SEPARATION = 0.55;
 
     const items = activeAvatars.map(item => {
-      const rawX = (item.person.centroid.x - 0.5) * SPREAD_FACTOR;
+      const mirroredScreenX = 1.0 - item.person.centroid.x;
+      const rawX = (mirroredScreenX - 0.5) * SPREAD_FACTOR;
       return {
         trackId: item.person.trackId,
         avatar: item.avatar,
@@ -491,6 +505,51 @@ export class StageManager {
 
     // ── Dynamic Auto-Fit Group Framing ──
     this._computeGroupFraming(items, count, now);
+  }
+
+  /**
+   * Projects an avatar's head anchor into screen space (pixels) for 2D floating stage labels.
+   * @param {number} trackId
+   * @returns {{ x: number, y: number, visible: boolean } | null}
+   */
+  getAvatarScreenPosition(trackId) {
+    const avatar = this.trackAvatars.get(trackId);
+    if (!avatar || !avatar.isLoaded || !avatar.visible || !this.renderer || !this.camera) {
+      return null;
+    }
+
+    if (!this._scratchProjVec) {
+      this._scratchProjVec = new THREE.Vector3();
+    }
+
+    // Anchor point: top of avatar head in 3D world space
+    const headBone = avatar.headBone || avatar.bones?.head || avatar.vrm?.humanoid?.getNormalizedBoneNode('head');
+    let headY = 1.68;
+    if (headBone) {
+      headY = (headBone.position?.y || 1.45) + 0.28;
+    }
+    this.camera.updateMatrixWorld();
+    this._scratchProjVec.set(avatar.stagePosition.x, avatar.stagePosition.y + headY, avatar.stagePosition.z);
+    this._scratchProjVec.project(this.camera);
+
+    // Behind camera check
+    if (this._scratchProjVec.z > 1.0) {
+      return null;
+    }
+
+    const domEl = this.renderer.domElement;
+    if (!domEl) return null;
+    const w = domEl.clientWidth || domEl.width || 640;
+    const h = domEl.clientHeight || domEl.height || 480;
+
+    const screenX = (this._scratchProjVec.x * 0.5 + 0.5) * w;
+    const screenY = (-(this._scratchProjVec.y * 0.5) + 0.5) * h;
+
+    return {
+      x: screenX,
+      y: screenY,
+      visible: true
+    };
   }
 
   /**
@@ -589,6 +648,16 @@ export class StageManager {
   }
 
   /**
+   * Connects an external camera state object (from CameraNavigator).
+   * When cameraState.mode === 'MANUAL', the render loop reads desired
+   * camera position from cameraState instead of auto-framing.
+   * @param {Object|null} state
+   */
+  setCameraState(state) {
+    this._cameraState = state || null;
+  }
+
+  /**
    * Returns live WebGL resource information from Three.js renderer.
    * Used for memory profiling and leak verification.
    */
@@ -620,37 +689,7 @@ export class StageManager {
     const tick = () => {
       if (!this._isLoopRunning) return;
       requestAnimationFrame(tick);
-
-      const delta = this._clock.getDelta();
-      this.controls.update();
-
-      // Camera auto-framing smooth lerp (position + look-at)
-      if (this._autoFraming) {
-        const alpha = this._currentLerpAlpha || 0.06;
-        this.camera.position.x += (this._targetCamPos.x - this.camera.position.x) * alpha;
-        this.camera.position.y += (this._targetCamPos.y - this.camera.position.y) * alpha * 0.5;
-        this.camera.position.z += (this._targetCamPos.z - this.camera.position.z) * alpha;
-        this.controls.target.x += (this._targetCamLookAt.x - this.controls.target.x) * alpha;
-        this.controls.target.y += (this._targetCamLookAt.y - this.controls.target.y) * alpha * 0.5;
-      }
-
-      // Update VRM spring-bone physics for all active avatars
-      const updatedAvatars = new Set();
-      for (const avatar of this.trackAvatars.values()) {
-        avatar.update(delta);
-        updatedAvatars.add(avatar);
-      }
-      for (const avatar of this.avatars.values()) {
-        if (!updatedAvatars.has(avatar)) {
-          avatar.update(delta);
-        }
-      }
-
-      // Single unified render pass for all avatars
-      const tRender0 = performance.now();
-      this.renderer.render(this.scene, this.camera);
-      this.lastRenderMs = performance.now() - tRender0;
-      this._trackFps();
+      this._tickCore();
     };
 
     tick();
@@ -658,6 +697,69 @@ export class StageManager {
 
   stopRenderLoop() {
     this._isLoopRunning = false;
+  }
+
+  /**
+   * Performs a single tick: camera lerp, VRM updates, render.
+   * Called from the standalone RAF loop OR from main.js unified loop.
+   * When main.js calls this, it should first stop the standalone loop.
+   */
+  tickOnce() {
+    this._tickCore();
+  }
+
+  /**
+   * Core tick logic — shared between standalone RAF and unified mode.
+   * @private
+   */
+  _tickCore() {
+    const delta = this._clock.getDelta();
+    // Clamp delta to prevent physics explosion after tab-switch or frame spike
+    const clampedDelta = Math.min(delta, 0.05); // Max 50ms = 20fps minimum
+
+    this.controls.update();
+
+    // Camera auto-framing smooth lerp (position + look-at)
+    const cs = this._cameraState;
+    if (cs && cs.mode === 'MANUAL') {
+      const desired = cs.getDesiredCamPos();
+      const target = cs.getDesiredCamTarget();
+      const alpha = 0.07;
+      this.camera.position.x += (desired.x - this.camera.position.x) * alpha;
+      this.camera.position.y += (desired.y - this.camera.position.y) * alpha;
+      this.camera.position.z += (desired.z - this.camera.position.z) * alpha;
+      this.controls.target.x += (target.x - this.controls.target.x) * alpha;
+      this.controls.target.y += (target.y - this.controls.target.y) * alpha;
+      this.controls.target.z += (target.z - this.controls.target.z) * alpha;
+    } else if (this._autoFraming) {
+      const alpha = this._currentLerpAlpha || 0.06;
+      this.camera.position.x += (this._targetCamPos.x - this.camera.position.x) * alpha;
+      this.camera.position.y += (this._targetCamPos.y - this.camera.position.y) * alpha * 0.5;
+      this.camera.position.z += (this._targetCamPos.z - this.camera.position.z) * alpha;
+      this.controls.target.x += (this._targetCamLookAt.x - this.controls.target.x) * alpha;
+      this.controls.target.y += (this._targetCamLookAt.y - this.controls.target.y) * alpha * 0.5;
+    }
+
+    // Update VRM spring-bone physics for all active avatars
+    // Pre-allocated Set avoids per-frame GC (ROOT CAUSE #5)
+    const tPhysics0 = performance.now();
+    this._updatedAvatarsSet.clear();
+    for (const avatar of this.trackAvatars.values()) {
+      avatar.update(clampedDelta);
+      this._updatedAvatarsSet.add(avatar);
+    }
+    for (const avatar of this.avatars.values()) {
+      if (!this._updatedAvatarsSet.has(avatar)) {
+        avatar.update(clampedDelta);
+      }
+    }
+    this.lastPhysicsMs = performance.now() - tPhysics0;
+
+    // Single unified render pass for all avatars
+    const tRender0 = performance.now();
+    this.renderer.render(this.scene, this.camera);
+    this.lastRenderMs = performance.now() - tRender0;
+    this._trackFps();
   }
 
   _trackFps() {

@@ -19,6 +19,22 @@
 import { avatarRegistry } from '../library/avatarRegistry.js';
 import { ASSIGNMENT_STATE } from '../tracking/avatarAssignmentManager.js';
 
+export const TRACK_COLORS = [
+  '#4fd1c5', // Track 1: Cyan
+  '#9f7aea', // Track 2: Purple
+  '#f6ad55', // Track 3: Amber
+  '#f687b3', // Track 4: Rose Pink
+  '#63b3ed', // Track 5: Sky Blue
+  '#48bb78', // Track 6: Emerald Green
+  '#ed8936', // Track 7: Orange
+  '#b794f4'  // Track 8: Violet
+];
+
+export function getTrackColor(trackId) {
+  const id = typeof trackId === 'number' && trackId > 0 ? trackId : 1;
+  return TRACK_COLORS[(id - 1) % TRACK_COLORS.length];
+}
+
 export const HUD_STATE = {
   TRACKED: 'TRACKED',
   INIT: 'INIT',
@@ -55,9 +71,20 @@ export class MultiPersonHUD {
     /** Previous active count for detecting transitions */
     this._prevActiveCount = 0;
 
+    /** @type {((trackId: number) => void)|null} Callback when a card is clicked/selected */
+    this._onTrackSelect = null;
+
     if (this.container) {
       this._initDOM();
     }
+  }
+
+  /**
+   * Register a track selection callback.
+   * @param {(trackId: number) => void} fn
+   */
+  setOnTrackSelect(fn) {
+    this._onTrackSelect = fn;
   }
 
   /**
@@ -133,11 +160,25 @@ export class MultiPersonHUD {
     this._globalStatusEl.appendChild(globalRight);
     this.container.appendChild(this._globalStatusEl);
 
+    // Cache global element references to avoid per-frame document.getElementById
+    this._modeEl = modePill;
+    this._popEl = popPill;
+    this._tierEl = tierTag;
+    this._fpsEl = fpsTag;
+    this._bodyEl = bodyTag;
+    this._handEl = handTag;
+
     // 2. Single-Person Compact Indicator Bar
     this._singlePersonBar = document.createElement('div');
     this._singlePersonBar.className = 'hud-single-bar';
     this._singlePersonBar.id = 'hudSingleBar';
     this._singlePersonBar.style.display = 'none';
+    this._singlePersonBar.style.cursor = 'pointer';
+    this._singlePersonBar.addEventListener('click', () => {
+      if (this._onTrackSelect && this._singlePersonBar.dataset.trackId) {
+        this._onTrackSelect(parseInt(this._singlePersonBar.dataset.trackId, 10));
+      }
+    });
 
     const singleDot = document.createElement('span');
     singleDot.className = 'hud-single-dot';
@@ -158,6 +199,12 @@ export class MultiPersonHUD {
     singleState.textContent = 'TRACKED';
     this._singlePersonBar.appendChild(singleState);
 
+    // Cache single bar element references to avoid per-frame querySelector
+    this._singleDotEl = singleDot;
+    this._singleTitleEl = singleTitle;
+    this._singleAvatarEl = singleAvatar;
+    this._singleStateEl = singleState;
+
     this.container.appendChild(this._singlePersonBar);
 
     // 3. Multi-Person Cards Deck (Pre-allocated pool of cards)
@@ -173,6 +220,12 @@ export class MultiPersonHUD {
       card.className = 'hud-person-card';
       card.id = `hud-card-${i}`;
       card.style.display = 'none';
+
+      card.addEventListener('click', () => {
+        if (this._onTrackSelect && card.dataset.trackId) {
+          this._onTrackSelect(parseInt(card.dataset.trackId, 10));
+        }
+      });
 
       // Header
       const header = document.createElement('div');
@@ -319,16 +372,20 @@ export class MultiPersonHUD {
   }
 
   /**
-   * Updates global top HUD bar telemetry.
+   * Updates global top HUD bar telemetry (throttled to ~10Hz).
    * @private
    */
   _updateGlobalBar(activeCount, maxPeople, mode, telemetry, bodyOn, handOn) {
-    const modeEl = document.getElementById('hudModePill');
-    const popEl = document.getElementById('hudPopulationPill');
-    const tierEl = document.getElementById('hudTierTag');
-    const fpsEl = document.getElementById('hudFpsTag');
-    const bodyEl = document.getElementById('hudBodyTag');
-    const handEl = document.getElementById('hudHandTag');
+    const now = performance.now();
+    if (this._lastGlobalBarUpdate && now - this._lastGlobalBarUpdate < 100) return;
+    this._lastGlobalBarUpdate = now;
+
+    const modeEl = this._modeEl;
+    const popEl = this._popEl;
+    const tierEl = this._tierEl;
+    const fpsEl = this._fpsEl;
+    const bodyEl = this._bodyEl;
+    const handEl = this._handEl;
 
     if (modeEl) {
       modeEl.textContent = mode.toUpperCase();
@@ -366,16 +423,29 @@ export class MultiPersonHUD {
    */
   _renderSingleCompact(person, assignmentManager, options = {}) {
     if (!this._singlePersonBar) return;
-    const titleEl = this._singlePersonBar.querySelector('.hud-single-title');
-    const avatarEl = this._singlePersonBar.querySelector('.hud-single-avatar');
-    const stateEl = this._singlePersonBar.querySelector('.hud-single-state');
+    const titleEl = this._singleTitleEl;
+    const avatarEl = this._singleAvatarEl;
+    const stateEl = this._singleStateEl;
+    const singleDot = this._singleDotEl;
 
     const avatarId = assignmentManager ? assignmentManager.getAvatarIdForTrack(person.trackId) : null;
     const assignmentState = assignmentManager ? assignmentManager.getAssignmentStateForTrack(person.trackId) : null;
     const avatarName = avatarId ? (avatarRegistry.get(avatarId)?.name || avatarId) : 'Waiting for avatar';
 
-    if (titleEl) titleEl.textContent = `Track #${person.trackId} ·`;
+    this._singlePersonBar.dataset.trackId = person.trackId;
+    const color = getTrackColor(person.trackId);
+    if (singleDot) singleDot.style.background = color;
+
+    if (titleEl) {
+      titleEl.textContent = `Track #${person.trackId} ·`;
+      titleEl.style.color = color;
+    }
     if (avatarEl) avatarEl.textContent = `${avatarName}`;
+
+    const selectedTrackId = options.selectedTrackId || null;
+    this._singlePersonBar.classList.toggle('selected', person.trackId === selectedTrackId);
+    this._singlePersonBar.style.setProperty('--track-color', color);
+    this._singlePersonBar.style.setProperty('--track-glow', color + '40');
 
     if (stateEl) {
       this._applyStateBadge(stateEl, person.state, assignmentState);
@@ -390,16 +460,25 @@ export class MultiPersonHUD {
     const count = Math.min(activeTracks.length, this.maxCards);
     const handTracking = options.handTracking !== false;
     const isHandSkipped = options.isHandSkipped === true;
+    const selectedTrackId = options.selectedTrackId || null;
 
     for (let i = 0; i < this.maxCards; i++) {
       const card = this._cardPool[i];
       if (i < count) {
         const person = activeTracks[i];
         card.element.style.display = 'flex';
+        card.element.dataset.trackId = person.trackId;
+
+        const color = getTrackColor(person.trackId);
+        card.element.style.setProperty('--track-color', color);
+        card.element.style.setProperty('--track-glow', color + '40');
+        card.element.classList.toggle('selected', person.trackId === selectedTrackId);
 
         // Identity: Person N + persistent TrackID
         card.personLabelEl.textContent = `Person ${i + 1}`;
+        card.personLabelEl.style.color = color;
         card.trackIdEl.textContent = `Track #${person.trackId}`;
+        card.trackIdEl.style.color = color;
 
         // Avatar Assignment & Waiting Status
         const avatarId = assignmentManager ? assignmentManager.getAvatarIdForTrack(person.trackId) : null;

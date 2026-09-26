@@ -29,7 +29,6 @@ import {
   scratchEuler, scratchMatrix, scratchDecompPos, scratchDecompScale
 } from './scratchPool.js';
 import { disposeVRM } from './vramDisposer.js';
-import { validateAvatarRig } from './avatarRigValidator.js';
 
 // ── Pose Landmark Indices (MediaPipe Pose) ──
 const POSE_IDX = {
@@ -62,12 +61,26 @@ const FINGER_BONE_NAMES = {
   little: ['LittleProximal', 'LittleIntermediate', 'LittleDistal']
 };
 
+// ── Hoisted Static Sets & Fast Map (Zero Per-Frame Allocations) ──
+const BLINK_KEYS = new Set(['blinkLeft', 'blinkRight']);
+const MOUTH_KEYS = new Set(['aa', 'ih', 'ou', 'oh']);
+const GAZE_KEYS  = new Set(['lookUp', 'lookDown', 'lookLeft', 'lookRight']);
+const _categoryScores = Object.create(null);
+
+function dampBoneQuat(bone, targetQ, baseAlpha) {
+  const angle = bone.quaternion.angleTo(targetQ);
+  if (angle < 0.015) return; // Tiny deadzone
+  const a = angle < 0.06 ? baseAlpha * 0.3 : baseAlpha;
+  bone.quaternion.slerp(targetQ, a);
+}
+
+function deadZone(x) {
+  return x < 0.12 ? 0 : x;
+}
+
 /** Convert a MediaPipe Pose WORLD landmark to Three.js space into a destination vector (zero allocation) */
 function poseToScratch(lm, outVec) {
-  // MediaPipe Pose: +X is right, +Y is DOWN (head ~0.35, hips ~0.70), +Z is towards camera.
-  // Three.js humanoid space: +X is right, +Y is UP, +Z is towards camera.
-  // Invert Y (-lm.y) so that raising physical arms moves avatar arms UP.
-  outVec.set(lm.x, -lm.y, -lm.z * 0.3);
+  outVec.set(lm.x, lm.y, -lm.z * 0.3);
   return outVec;
 }
 
@@ -85,14 +98,12 @@ export class AvatarInstance {
     this.vrm = null;
     this.headBone = null;
     this.isLoaded = false;
-    this.rigAudit = null;
 
     // Fully isolated per-avatar state (guarantees multi-avatar independence)
     this.expressionState = {};
     this._armQuatState = {};
     this._fingerCurlState = {};
     this._wristQuatState = {};
-    this._lastHandSeen = { left: 0, right: 0 };
 
     // Lateral stage placement coordinates
     this.stagePosition = new THREE.Vector3(0, 0, 0);
@@ -142,20 +153,33 @@ export class AvatarInstance {
 
             this.vrm = vrm;
             this.headBone = vrm.humanoid?.getNormalizedBoneNode('head') ?? null;
-            this.isLoaded = true;
-
-            // Audit humanoid bone rig and retargeting capabilities at load/activation time
-            this.rigAudit = validateAvatarRig(vrm, this.id);
-            if (this.rigAudit.warnings.length > 0) {
-              console.info(`[AvatarInstance] Rig audit for '${this.id}':`, this.rigAudit.warnings.join('; '));
+            this.bones = {
+              head: this.headBone,
+              neck: vrm.humanoid?.getNormalizedBoneNode('neck') ?? null,
+              leftUpperArm: vrm.humanoid?.getNormalizedBoneNode('leftUpperArm') ?? null,
+              leftLowerArm: vrm.humanoid?.getNormalizedBoneNode('leftLowerArm') ?? null,
+              leftHand: vrm.humanoid?.getNormalizedBoneNode('leftHand') ?? null,
+              rightUpperArm: vrm.humanoid?.getNormalizedBoneNode('rightUpperArm') ?? null,
+              rightLowerArm: vrm.humanoid?.getNormalizedBoneNode('rightLowerArm') ?? null,
+              rightHand: vrm.humanoid?.getNormalizedBoneNode('rightHand') ?? null,
+              fingers: {}
+            };
+            for (const side of ['left', 'right']) {
+              for (const finger in FINGER_BONE_NAMES) {
+                const bNames = FINGER_BONE_NAMES[finger];
+                for (let j = 0; j < bNames.length; j++) {
+                  const key = `${side}${bNames[j]}`;
+                  this.bones.fingers[key] = vrm.humanoid?.getNormalizedBoneNode(key) ?? null;
+                }
+              }
             }
+            this.isLoaded = true;
 
             // Reset all isolated state caches
             this.expressionState = {};
             this._armQuatState = {};
             this._fingerCurlState = {};
             this._wristQuatState = {};
-            this._lastHandSeen = { left: 0, right: 0 };
 
             // Synchronize stage position
             this.vrm.scene.position.copy(this.stagePosition);
@@ -194,30 +218,34 @@ export class AvatarInstance {
   applyBlendshapes(categories, smoothingAlpha = 0.3) {
     if (!this.vrm?.expressionManager || !categories) return;
 
-    const score = (name) => categories.find((c) => c.categoryName === name)?.score ?? 0;
+    // Single pass to populate _categoryScores (O(1) lookups instead of 20x O(n) array scans)
+    for (let i = 0; i < categories.length; i++) {
+      const c = categories[i];
+      _categoryScores[c.categoryName] = c.score;
+    }
 
-    // ── Raw scores from MediaPipe ──
-    const jawOpen     = score('jawOpen');
-    const smileRaw    = (score('mouthSmileLeft') + score('mouthSmileRight')) / 2;
-    const frownRaw    = (score('mouthFrownLeft') + score('mouthFrownRight')) / 2;
-    const browDownRaw = (score('browDownLeft') + score('browDownRight')) / 2;
-    const browUpRaw   = score('browInnerUp');
-    const eyeWideRaw  = (score('eyeWideLeft') + score('eyeWideRight')) / 2;
-    const pucker      = score('mouthPucker');
-    const funnel      = score('mouthFunnel');
-    const stretch     = (score('mouthStretchLeft') + score('mouthStretchRight')) / 2;
-    const rawBlinkL   = score('eyeBlinkLeft');
-    const rawBlinkR   = score('eyeBlinkRight');
+    // ── Raw scores from MediaPipe (O(1) map access) ──
+    const jawOpen     = _categoryScores.jawOpen || 0;
+    const smileRaw    = ((_categoryScores.mouthSmileLeft || 0) + (_categoryScores.mouthSmileRight || 0)) / 2;
+    const frownRaw    = ((_categoryScores.mouthFrownLeft || 0) + (_categoryScores.mouthFrownRight || 0)) / 2;
+    const browDownRaw = ((_categoryScores.browDownLeft || 0) + (_categoryScores.browDownRight || 0)) / 2;
+    const browUpRaw   = _categoryScores.browInnerUp || 0;
+    const eyeWideRaw  = ((_categoryScores.eyeWideLeft || 0) + (_categoryScores.eyeWideRight || 0)) / 2;
+    const pucker      = _categoryScores.mouthPucker || 0;
+    const funnel      = _categoryScores.mouthFunnel || 0;
+    const stretch     = ((_categoryScores.mouthStretchLeft || 0) + (_categoryScores.mouthStretchRight || 0)) / 2;
+    const rawBlinkL   = _categoryScores.eyeBlinkLeft || 0;
+    const rawBlinkR   = _categoryScores.eyeBlinkRight || 0;
 
     // ── Eye gaze ──
-    const lookUpL   = score('eyeLookUpLeft');
-    const lookUpR   = score('eyeLookUpRight');
-    const lookDownL = score('eyeLookDownLeft');
-    const lookDownR = score('eyeLookDownRight');
-    const lookInL   = score('eyeLookInLeft');
-    const lookInR   = score('eyeLookInRight');
-    const lookOutL  = score('eyeLookOutLeft');
-    const lookOutR  = score('eyeLookOutRight');
+    const lookUpL   = _categoryScores.eyeLookUpLeft || 0;
+    const lookUpR   = _categoryScores.eyeLookUpRight || 0;
+    const lookDownL = _categoryScores.eyeLookDownLeft || 0;
+    const lookDownR = _categoryScores.eyeLookDownRight || 0;
+    const lookInL   = _categoryScores.eyeLookInLeft || 0;
+    const lookInR   = _categoryScores.eyeLookInRight || 0;
+    const lookOutL  = _categoryScores.eyeLookOutLeft || 0;
+    const lookOutR  = _categoryScores.eyeLookOutRight || 0;
 
     const gazeRight = (lookInL + lookOutR) / 2;
     const gazeLeft  = (lookOutL + lookInR) / 2;
@@ -259,10 +287,7 @@ export class AvatarInstance {
     };
 
     const em = this.vrm.expressionManager;
-    const BLINK_KEYS = new Set(['blinkLeft', 'blinkRight']);
-    const MOUTH_KEYS = new Set(['aa', 'ih', 'ou', 'oh']);
-    const GAZE_KEYS  = new Set(['lookUp', 'lookDown', 'lookLeft', 'lookRight']);
-
+    // Uses module-level hoisted BLINK_KEYS, MOUTH_KEYS, GAZE_KEYS
     for (const name in target) {
       let a;
       if (BLINK_KEYS.has(name))       a = 0.7;
@@ -305,33 +330,25 @@ export class AvatarInstance {
   applyPose(worldLandmarks, alpha = 0.3) {
     if (!this.vrm?.humanoid || !worldLandmarks) return;
 
-    const dampQuat = (bone, targetQ, baseAlpha) => {
-      const angle = bone.quaternion.angleTo(targetQ);
-      if (angle < 0.015) return; // Tiny deadzone
-      const a = angle < 0.06 ? baseAlpha * 0.3 : baseAlpha;
-      bone.quaternion.slerp(targetQ, a);
-    };
-
     for (const side of ['left', 'right']) {
       const pShoulder = worldLandmarks[POSE_IDX[`${side}Shoulder`]];
       const pElbow    = worldLandmarks[POSE_IDX[`${side}Elbow`]];
       const pWrist    = worldLandmarks[POSE_IDX[`${side}Wrist`]];
 
-      const upperBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}UpperArm`);
-      const lowerBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}LowerArm`);
+      const upperBone = this.bones?.[`${side}UpperArm`] || this.vrm.humanoid.getNormalizedBoneNode(`${side}UpperArm`);
+      const lowerBone = this.bones?.[`${side}LowerArm`] || this.vrm.humanoid.getNormalizedBoneNode(`${side}LowerArm`);
       const restDir   = ARM_REST_DIR[`${side}UpperArm`];
 
       // Gracefully relax arms if landmarks drop out or visibility < 0.1
       if (!pWrist || !pElbow || (pWrist.visibility ?? 1) < 0.1 || (pElbow.visibility ?? 1) < 0.1) {
         if (upperBone) {
-          // In Three.js, downward vector pointing toward floor is -Y
-          scratchDownDir.set(restDir.x * 0.15, -0.98, 0).normalize();
+          scratchDownDir.set(restDir.x * 0.15, 0.98, 0).normalize();
           scratchQuatDrop.setFromUnitVectors(restDir, scratchDownDir);
-          dampQuat(upperBone, scratchQuatDrop, alpha * 0.3);
+          dampBoneQuat(upperBone, scratchQuatDrop, alpha * 0.3);
         }
         if (lowerBone) {
           scratchQuatA.set(0, 0, 0, 1);
-          dampQuat(lowerBone, scratchQuatA, alpha * 0.3);
+          dampBoneQuat(lowerBone, scratchQuatA, alpha * 0.3);
         }
         continue;
       }
@@ -348,7 +365,7 @@ export class AvatarInstance {
       // Upper arm
       if (upperBone) {
         scratchQuatTarget.setFromUnitVectors(restDir, scratchUpperDir);
-        dampQuat(upperBone, scratchQuatTarget, alpha);
+        dampBoneQuat(upperBone, scratchQuatTarget, alpha);
       }
 
       // Lower arm (elbow hinge)
@@ -360,7 +377,7 @@ export class AvatarInstance {
         if (scratchAxis.lengthSq() < 1e-6) scratchAxis.set(0, 1, 0);
         scratchAxis.normalize();
         scratchQuatTarget.setFromAxisAngle(scratchAxis, bend);
-        dampQuat(lowerBone, scratchQuatTarget, alpha);
+        dampBoneQuat(lowerBone, scratchQuatTarget, alpha);
       }
     }
   }
@@ -370,83 +387,72 @@ export class AvatarInstance {
   // ─────────────────────────────────────────────────────────────────────────
   applyHands(handsInput, poseImageLandmarks, poseWorldLandmarks, alpha = 0.4) {
     if (!this.vrm?.humanoid || !handsInput) return;
-    if (this.rigAudit && this.rigAudit.supportedHandTracking === 'NONE') return;
 
-    // Normalize hands input: can be an Array of hand objects or a MediaPipe handsResult object
-    let handsList = [];
+    // Normalize input to an array of individual hand entries
+    let handEntries = [];
     if (Array.isArray(handsInput)) {
-      handsList = handsInput.map(h => ({
-        lm: h.landmarks,
-        worldLm: h.worldLandmarks,
-        handedness: (typeof h.handedness === 'string' ? h.handedness : h.handedness?.[0]?.categoryName || '').toLowerCase()
-      }));
-    } else if (handsInput.landmarks && Array.isArray(handsInput.landmarks)) {
-      handsList = handsInput.landmarks.map((lm, i) => ({
-        lm,
-        worldLm: handsInput.worldLandmarks?.[i],
-        handedness: (handsInput.handednesses?.[i]?.[0]?.categoryName || '').toLowerCase()
+      handEntries = handsInput;
+    } else if (Array.isArray(handsInput.landmarks)) {
+      handEntries = handsInput.landmarks.map((lm, i) => ({
+        landmarks: lm,
+        worldLandmarks: handsInput.worldLandmarks?.[i] || null,
+        handedness: handsInput.handednesses?.[i]?.[0]?.categoryName || handsInput.handednesses?.[i] || 'Unknown',
+        wrist: handsInput.wrists?.[i] || (lm ? { x: lm[0].x, y: lm[0].y, z: lm[0].z } : null)
       }));
     }
 
-    if (handsList.length === 0) return;
+    if (handEntries.length === 0) return;
 
-    const seenSides = new Set();
+    for (let h = 0; h < handEntries.length; h++) {
+      const entry = handEntries[h];
+      const lm = entry.landmarks;
+      const worldLm = entry.worldLandmarks;
+      if (!lm || lm.length === 0) continue;
 
-    for (let h = 0; h < handsList.length; h++) {
-      const { lm, worldLm, handedness } = handsList[h];
-      if (!lm) continue;
-
-      // Determine side with mirror correction
-      let side = handedness;
-      if (!poseImageLandmarks) {
-        side = (side === 'left') ? 'right' : 'left';
-      } else {
-        const w = lm[0];
+      // Determine side:
+      // 1. If pose image landmarks are available, measure distance to left wrist (15) vs right wrist (16)
+      // 2. Otherwise use handedness with selfie mirror inversion
+      let side = null;
+      if (poseImageLandmarks && poseImageLandmarks[15] && poseImageLandmarks[16]) {
+        const w = entry.wrist || lm[0];
         const dL = Math.hypot(w.x - poseImageLandmarks[15].x, w.y - poseImageLandmarks[15].y);
         const dR = Math.hypot(w.x - poseImageLandmarks[16].x, w.y - poseImageLandmarks[16].y);
         side = dL < dR ? 'left' : 'right';
+      } else {
+        const cat = String(entry.handedness || '').toLowerCase();
+        side = (cat === 'left') ? 'right' : (cat === 'right' ? 'left' : null);
       }
-      if (!side || (side !== 'left' && side !== 'right')) continue;
-      seenSides.add(side);
-      this._lastHandSeen[side] = performance.now();
+      if (!side) continue;
 
       // ── Wrist Rotation ──
-      const handBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}Hand`);
+      const handBone = this.bones?.[`${side}Hand`] || this.vrm.humanoid.getNormalizedBoneNode(`${side}Hand`);
       if (handBone && worldLm && poseWorldLandmarks) {
-        // Invert Y to match Three.js coordinate system
-        scratchHandWrist.set(worldLm[0].x, -worldLm[0].y, -worldLm[0].z);
-        scratchHandMcp.set(worldLm[9].x, -worldLm[9].y, -worldLm[9].z);
+        scratchHandWrist.set(worldLm[0].x, worldLm[0].y, -worldLm[0].z);
+        scratchHandMcp.set(worldLm[9].x, worldLm[9].y, -worldLm[9].z);
         scratchHandFwd.copy(scratchHandMcp).sub(scratchHandWrist).normalize();
 
         const pElbow = poseWorldLandmarks[POSE_IDX[`${side}Elbow`]];
         const pWrist = poseWorldLandmarks[POSE_IDX[`${side}Wrist`]];
-        if (pElbow && pWrist) {
-          scratchElbow.set(pElbow.x, -pElbow.y, -pElbow.z * 0.3);
-          scratchWrist.set(pWrist.x, -pWrist.y, -pWrist.z * 0.3);
-          scratchForearmDir.copy(scratchWrist).sub(scratchElbow).normalize();
+        scratchElbow.set(pElbow.x, pElbow.y, -pElbow.z * 0.3);
+        scratchWrist.set(pWrist.x, pWrist.y, -pWrist.z * 0.3);
+        scratchForearmDir.copy(scratchWrist).sub(scratchElbow).normalize();
 
-          if (scratchForearmDir.lengthSq() > 0 && scratchHandFwd.lengthSq() > 0) {
-            scratchQuatTwist.setFromUnitVectors(scratchForearmDir, scratchHandFwd);
-            const twistAngle = 2 * Math.acos(Math.abs(THREE.MathUtils.clamp(scratchQuatTwist.w, -1, 1)));
-            const maxWrist = THREE.MathUtils.degToRad(90);
+        if (scratchForearmDir.lengthSq() > 0 && scratchHandFwd.lengthSq() > 0) {
+          scratchQuatTwist.setFromUnitVectors(scratchForearmDir, scratchHandFwd);
+          const twistAngle = 2 * Math.acos(Math.abs(THREE.MathUtils.clamp(scratchQuatTwist.w, -1, 1)));
+          const maxWrist = THREE.MathUtils.degToRad(90);
 
-            scratchQuatTarget.copy(scratchQuatTwist);
-            if (twistAngle > maxWrist) {
-              scratchQuatTarget.slerp(scratchQuatTwist, maxWrist / twistAngle);
-            }
+          scratchQuatTarget.copy(scratchQuatTwist);
+          if (twistAngle > maxWrist) {
+            scratchQuatTarget.slerp(scratchQuatTwist, maxWrist / twistAngle);
+          }
 
-            const diff = handBone.quaternion.angleTo(scratchQuatTarget);
-            if (diff > 0.03) {
-              const a = diff < 0.1 ? alpha * 0.25 : alpha * 0.7;
-              handBone.quaternion.slerp(scratchQuatTarget, a);
-            }
+          const diff = handBone.quaternion.angleTo(scratchQuatTarget);
+          if (diff > 0.03) {
+            const a = diff < 0.1 ? alpha * 0.25 : alpha * 0.7;
+            handBone.quaternion.slerp(scratchQuatTarget, a);
           }
         }
-      }
-
-      // If rig does not support finger tracking, skip fingers
-      if (this.rigAudit && this.rigAudit.supportedFingerTracking === false) {
-        continue;
       }
 
       // ── Per-joint Finger Curl ──
@@ -455,10 +461,10 @@ export class AvatarInstance {
         const useWorld = !!worldLm;
 
         if (useWorld) {
-          scratchJointV0.set(worldLm[i0].x, -worldLm[i0].y, -worldLm[i0].z);
-          scratchJointV1.set(worldLm[i1].x, -worldLm[i1].y, -worldLm[i1].z);
-          scratchJointV2.set(worldLm[i2].x, -worldLm[i2].y, -worldLm[i2].z);
-          scratchJointV3.set(worldLm[i3].x, -worldLm[i3].y, -worldLm[i3].z);
+          scratchJointV0.set(worldLm[i0].x, worldLm[i0].y, worldLm[i0].z);
+          scratchJointV1.set(worldLm[i1].x, worldLm[i1].y, worldLm[i1].z);
+          scratchJointV2.set(worldLm[i2].x, worldLm[i2].y, worldLm[i2].z);
+          scratchJointV3.set(worldLm[i3].x, worldLm[i3].y, worldLm[i3].z);
         } else {
           scratchJointV0.set(lm[i0].x, -lm[i0].y, -(lm[i0].z || 0));
           scratchJointV1.set(lm[i1].x, -lm[i1].y, -(lm[i1].z || 0));
@@ -477,13 +483,13 @@ export class AvatarInstance {
         const c0 = THREE.MathUtils.clamp(a01 / maxBend, 0, 1);
         const c1 = THREE.MathUtils.clamp(a12 / maxBend, 0, 1);
 
-        const dz = (x) => x < 0.12 ? 0 : x;
-        const jointCurls = [dz(c0), dz(c1), dz(c1 * 0.7)];
+        const jointCurls = [deadZone(c0), deadZone(c1), deadZone(c1 * 0.7)];
         const bones = FINGER_BONE_NAMES[finger];
         const maxRot = THREE.MathUtils.degToRad(75);
 
         for (let j = 0; j < bones.length; j++) {
-          const bone = this.vrm.humanoid.getNormalizedBoneNode(`${side}${bones[j]}`);
+          const boneKey = `${side}${bones[j]}`;
+          const bone = this.bones?.fingers?.[boneKey] || this.vrm.humanoid.getNormalizedBoneNode(boneKey);
           if (!bone) continue;
 
           const key  = `${side}_${finger}_${j}`;
@@ -503,110 +509,6 @@ export class AvatarInstance {
         }
       }
     }
-
-    // Decay unseen side if only one hand was tracked
-    for (const side of ['left', 'right']) {
-      if (!seenSides.has(side)) {
-        this.decayHandSide(side, 0.016);
-      }
-    }
-  }
-
-  /**
-   * Smoothly decays wrist orientation and finger curls for a specific hand side
-   * back to neutral zero rest pose when hand tracking drops out.
-   * @param {'left'|'right'} side
-   * @param {number} [dt=0.016] - Delta time in seconds
-   * @param {number} [decayRate=5.0] - Exponential decay rate
-   */
-  decayHandSide(side, dt = 0.016, decayRate = 5.0) {
-    if (!this.vrm?.humanoid) return;
-    const decayFactor = Math.min(dt * decayRate, 0.5);
-
-    // 1. Decay wrist rotation toward identity
-    const handBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}Hand`);
-    if (handBone) {
-      scratchQuatA.set(0, 0, 0, 1);
-      handBone.quaternion.slerp(scratchQuatA, decayFactor);
-    }
-
-    // 2. Decay finger curls toward 0
-    const maxRot = THREE.MathUtils.degToRad(75);
-    for (const finger in FINGER_BONE_NAMES) {
-      const bones = FINGER_BONE_NAMES[finger];
-      for (let j = 0; j < bones.length; j++) {
-        const key = `${side}_${finger}_${j}`;
-        const prev = this._fingerCurlState[key] ?? 0;
-        if (prev <= 0.001) {
-          this._fingerCurlState[key] = 0;
-          continue;
-        }
-        const next = Math.max(0, prev - (prev * decayFactor) - 0.01 * decayFactor);
-        this._fingerCurlState[key] = next;
-
-        const bone = this.vrm.humanoid.getNormalizedBoneNode(`${side}${bones[j]}`);
-        if (bone) {
-          if (finger === 'thumb') {
-            const sign = side === 'left' ? 1 : -1;
-            bone.rotation.set(0, next * maxRot * sign, next * maxRot * sign);
-          } else {
-            bone.rotation.set(0, 0, next * (side === 'left' ? maxRot : -maxRot));
-          }
-        }
-      }
-    }
-  }
-
-  /**
-   * Smoothly decays both hands to neutral uncurled rest pose.
-   * @param {number} [dt=0.016]
-   * @param {number} [decayRate=5.0]
-   */
-  decayHands(dt = 0.016, decayRate = 5.0) {
-    this.decayHandSide('left', dt, decayRate);
-    this.decayHandSide('right', dt, decayRate);
-  }
-
-  /**
-   * Resets all arm kinematics, wrist rotations, and finger curls to neutral rest pose.
-   * Completely wipes residual pose to prevent frozen hand/arm state.
-   */
-  resetPoseAndHands() {
-    if (!this.vrm?.humanoid) return;
-    scratchQuatA.set(0, 0, 0, 1);
-
-    for (const side of ['left', 'right']) {
-      const upperBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}UpperArm`);
-      const lowerBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}LowerArm`);
-      const handBone = this.vrm.humanoid.getNormalizedBoneNode(`${side}Hand`);
-      const restDir = ARM_REST_DIR[`${side}UpperArm`];
-
-      if (upperBone) {
-        scratchDownDir.set(restDir.x * 0.15, -0.98, 0).normalize();
-        scratchQuatDrop.setFromUnitVectors(restDir, scratchDownDir);
-        upperBone.quaternion.copy(scratchQuatDrop);
-      }
-      if (lowerBone) {
-        lowerBone.quaternion.copy(scratchQuatA);
-      }
-      if (handBone) {
-        handBone.quaternion.copy(scratchQuatA);
-      }
-
-      for (const finger in FINGER_BONE_NAMES) {
-        const bones = FINGER_BONE_NAMES[finger];
-        for (let j = 0; j < bones.length; j++) {
-          const key = `${side}_${finger}_${j}`;
-          this._fingerCurlState[key] = 0;
-          const bone = this.vrm.humanoid.getNormalizedBoneNode(`${side}${bones[j]}`);
-          if (bone) {
-            bone.rotation.set(0, 0, 0);
-          }
-        }
-      }
-    }
-    this._wristQuatState = {};
-    this._armQuatState = {};
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -621,6 +523,7 @@ export class AvatarInstance {
    */
   updateFace(faceData, options = {}) {
     if (!faceData) return;
+    const t0 = performance.now();
     const { smoothingAlpha = 0.3, headPoseEnabled = true } = options;
     if (faceData.blendshapes && faceData.blendshapes.length) {
       this.applyBlendshapes(faceData.blendshapes, smoothingAlpha);
@@ -628,6 +531,7 @@ export class AvatarInstance {
     if (faceData.transformationMatrix && faceData.transformationMatrix.length) {
       this.applyHeadPose(faceData.transformationMatrix, headPoseEnabled);
     }
+    this.lastExpressionMs = performance.now() - t0;
   }
 
   /**
@@ -638,10 +542,12 @@ export class AvatarInstance {
    */
   updatePose(poseData, options = {}) {
     if (!poseData) return;
+    const t0 = performance.now();
     const { alpha = 0.3 } = options;
     if (poseData.worldLandmarks && poseData.worldLandmarks.length) {
       this.applyPose(poseData.worldLandmarks, alpha);
     }
+    this.lastBodyRetargetMs = performance.now() - t0;
   }
 
   /**
@@ -654,8 +560,10 @@ export class AvatarInstance {
    */
   updateHands(handsResult, poseImageLandmarks = null, poseWorldLandmarks = null, options = {}) {
     if (!handsResult) return;
+    const t0 = performance.now();
     const { alpha = 0.4 } = options;
     this.applyHands(handsResult, poseImageLandmarks, poseWorldLandmarks, alpha);
+    this.lastHandRetargetMs = performance.now() - t0;
   }
 
   /**
@@ -730,13 +638,11 @@ export class AvatarInstance {
    * Completely disposes GPU and memory resources for this avatar.
    */
   dispose() {
-    this.resetPoseAndHands();
     if (this.vrm) {
       disposeVRM(this.vrm);
       this.vrm = null;
       this.headBone = null;
       this.isLoaded = false;
-      this.rigAudit = null;
       this.expressionState = {};
       this._armQuatState = {};
       this._fingerCurlState = {};

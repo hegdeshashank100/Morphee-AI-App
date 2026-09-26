@@ -69,7 +69,16 @@ export class LandmarkTracker {
    */
   detect(video, timestampMs) {
     if (!this.landmarker) throw new Error('LandmarkTracker not initialized — call init() first.');
+
+    // Timestamp guard: prevent duplicate inference on the exact same frame
+    if (this._lastTimestamp === timestampMs && this._lastResult) {
+      return this._lastResult;
+    }
+
+    const t0 = performance.now();
     const raw = this.landmarker.detectForVideo(video, timestampMs);
+    this.lastInferMs = performance.now() - t0;
+    this._lastTimestamp = timestampMs;
 
     const rawFaces = (raw && Array.isArray(raw.faceLandmarks)) ? raw.faceLandmarks : [];
     const rawBlendshapes = (raw && Array.isArray(raw.faceBlendshapes)) ? raw.faceBlendshapes : [];
@@ -78,7 +87,7 @@ export class LandmarkTracker {
 
     // Fast zero-allocation return on empty / no face detected
     if (count === 0) {
-      return {
+      const emptyResult = {
         faces: [],
         blendshapes: [],
         transformationMatrices: [],
@@ -87,6 +96,8 @@ export class LandmarkTracker {
         faceBlendshapes: [],
         facialTransformationMatrixes: []
       };
+      this._lastResult = emptyResult;
+      return emptyResult;
     }
 
     // Parallel array extraction with robust null/partial safety guards
@@ -104,7 +115,7 @@ export class LandmarkTracker {
       transformationMatrices[i] = (mat && (mat.data || Array.isArray(mat))) ? (mat.data || mat) : [];
     }
 
-    return {
+    const result = {
       faces,
       blendshapes,
       transformationMatrices,
@@ -114,5 +125,7 @@ export class LandmarkTracker {
       faceBlendshapes: rawBlendshapes,
       facialTransformationMatrixes: rawMatrices
     };
+    this._lastResult = result;
+    return result;
   }
 }
