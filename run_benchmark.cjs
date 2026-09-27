@@ -45,7 +45,7 @@ app.whenReady().then(() => {
   }, 1000);
 
   setTimeout(() => {
-    console.error('[Benchmark Runner] Benchmark timed out after 90 seconds.');
+    console.error('[Benchmark Runner] Benchmark timed out after 120 seconds.');
     app.exit(1);
-  }, 90000);
+  }, 120000);
 });

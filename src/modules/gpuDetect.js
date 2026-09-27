@@ -52,11 +52,11 @@ export function detectGPU() {
 
   if (rendererLower.includes('nvidia') || vendorLower.includes('nvidia')) {
     info.isNvidia = true;
-    info.isCudaCapable = true;
+    info.isCudaCapable = false; // Note: Web runtime uses WebGL2 shader pipelines, not CUDA runtime
     info.isHardwareAccelerated = true;
     info.delegate = 'GPU';
     info.backend = info.webglVersion;
-    info.summary = `NVIDIA GPU active — WebGL / MediaPipe GPU acceleration enabled.`;
+    info.summary = `NVIDIA GPU active — WebGL2 / MediaPipe GPU acceleration enabled.`;
   } else if (rendererLower.includes('amd') || rendererLower.includes('radeon')) {
     info.isHardwareAccelerated = true;
     info.delegate = 'GPU';
@@ -107,13 +107,13 @@ export function populateGPUInfo(gpuInfo) {
 
   if (gpuName) {
     if (gpuInfo.isHardwareAccelerated) {
-      gpuName.textContent = 'GPU ACCELERATION ACTIVE';
-      gpuDetail.textContent = `${gpuInfo.renderer} (${gpuInfo.delegate || 'GPU'})`;
+      gpuName.textContent = 'GPU ACCELERATION (WEBGL2)';
+      gpuDetail.textContent = `${gpuInfo.renderer} (${gpuInfo.delegate || 'GPU'} Delegate)`;
       gpuIcon.textContent = gpuInfo.isNvidia ? '🟢' : '⚡';
       if (gpuStatus && gpuInfo.isNvidia) gpuStatus.classList.add('nvidia');
     } else {
       gpuName.textContent = 'CPU FALLBACK';
-      gpuDetail.textContent = 'Hardware acceleration unavailable';
+      gpuDetail.textContent = 'Hardware acceleration unavailable (WASM Delegate)';
       gpuIcon.textContent = '🔴';
     }
   }
@@ -124,5 +124,5 @@ export function populateGPUInfo(gpuInfo) {
   set('gpuInfoVendor', gpuInfo.vendor);
   set('gpuInfoWebGL', `${gpuInfo.webglVersion} (${gpuInfo.delegate} Delegate)`);
   set('gpuInfoMaxTex', gpuInfo.maxTextureSize ? `${gpuInfo.maxTextureSize}px` : 'N/A');
-  set('gpuInfoCuda', gpuInfo.isHardwareAccelerated ? `Active (${gpuInfo.delegate || 'GPU'})` : 'Disabled (CPU)');
+  set('gpuInfoCuda', gpuInfo.isHardwareAccelerated ? `${gpuInfo.delegate} Delegate (WebGL2 Accelerated)` : 'Disabled (CPU Fallback)');
 }

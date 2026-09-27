@@ -1141,6 +1141,7 @@ function loop() {
   // High-Resolution Frame Pipeline Profiler (PHASE 1)
   const primaryAvInstance = faceRenderer.stageManager.primaryAvatar;
   profiler.recordFrame({
+    frameIntervalMs: dtFrame,
     faceMs: faceInferMs,
     poseMs: poseInferMs,
     handsMs: handInferMs,
