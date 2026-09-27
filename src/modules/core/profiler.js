@@ -12,6 +12,7 @@
 const METRIC_KEYS = [
   'totalFrameMs',
   'frameIntervalMs',
+  'pacingErrorMs',
   'faceMs',
   'poseMs',
   'handsMs',
@@ -43,6 +44,12 @@ export class FrameProfiler {
     this._frameStartTime = 0;
     this._idx = 0;
     this._count = 0;
+
+    // Truthful Render Scheduler metrics
+    this.targetFps = 60;
+    this.rafFrequencyHz = 60;
+    this.schedulerSkippedFrames = 0;
+    this.schedulerRenderedFrames = 0;
 
     // Pre-allocated typed arrays for zero-allocation recording
     this._buffers = {};
@@ -84,9 +91,15 @@ export class FrameProfiler {
     if (totalFrameMs > 50.0) this.countOver50ms++;
     if (totalFrameMs > 100.0) this.countOver100ms++;
 
+    if (typeof metrics.targetFps === 'number') this.targetFps = metrics.targetFps;
+    if (typeof metrics.rafFrequencyHz === 'number') this.rafFrequencyHz = metrics.rafFrequencyHz;
+    if (typeof metrics.schedulerSkippedFrames === 'number') this.schedulerSkippedFrames = metrics.schedulerSkippedFrames;
+    if (typeof metrics.schedulerRenderedFrames === 'number') this.schedulerRenderedFrames = metrics.schedulerRenderedFrames;
+
     const idx = this._idx;
     this._buffers.totalFrameMs[idx] = totalFrameMs;
     this._buffers.frameIntervalMs[idx] = metrics.frameIntervalMs ?? 0;
+    this._buffers.pacingErrorMs[idx] = metrics.pacingErrorMs ?? 0;
     this._buffers.faceMs[idx] = metrics.faceMs || 0;
     this._buffers.poseMs[idx] = metrics.poseMs || 0;
     this._buffers.handsMs[idx] = metrics.handsMs || 0;
@@ -117,6 +130,8 @@ export class FrameProfiler {
     this.countOver33ms = 0;
     this.countOver50ms = 0;
     this.countOver100ms = 0;
+    this.schedulerSkippedFrames = 0;
+    this.schedulerRenderedFrames = 0;
     for (const key of METRIC_KEYS) {
       this._buffers[key].fill(0);
     }
@@ -125,7 +140,7 @@ export class FrameProfiler {
   /**
    * Computes statistical aggregates for a given metric key.
    * Uses pre-allocated scratch buffer for zero persistent GC churn.
-   * @param {string} key - e.g. 'totalFrameMs', 'faceMs', 'renderMs', 'frameIntervalMs'
+   * @param {string} key - e.g. 'totalFrameMs', 'faceMs', 'renderMs', 'frameIntervalMs', 'pacingErrorMs'
    */
   getStats(key = 'totalFrameMs') {
     const n = this._count;
@@ -181,9 +196,19 @@ export class FrameProfiler {
     const effectiveFrameTime = (intervalStats.avg > 0) ? intervalStats.avg : totalStats.avg;
     const currentFps = effectiveFrameTime > 0 ? Number((1000 / effectiveFrameTime).toFixed(1)) : 0;
 
+    const totalSched = this.schedulerRenderedFrames + this.schedulerSkippedFrames;
+    const skipRatio = totalSched > 0 ? Number(((this.schedulerSkippedFrames / totalSched) * 100).toFixed(1)) : 0;
+
     return {
       fps: currentFps,
+      targetFps: this.targetFps,
+      rafFrequencyHz: this.rafFrequencyHz,
       totalFramesMeasured: this.totalFramesMeasured,
+      scheduler: {
+        rendered: this.schedulerRenderedFrames,
+        skipped: this.schedulerSkippedFrames,
+        skipRatio
+      },
       windowSamples: this._count,
       buckets: {
         over16ms: this.countOver16ms,

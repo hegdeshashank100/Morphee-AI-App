@@ -682,6 +682,10 @@ export class StageManager {
     }
   }
 
+  setScheduler(scheduler) {
+    this._scheduler = scheduler || null;
+  }
+
   startRenderLoop() {
     if (this._isLoopRunning) return;
     this._isLoopRunning = true;
@@ -689,7 +693,14 @@ export class StageManager {
     const tick = () => {
       if (!this._isLoopRunning) return;
       requestAnimationFrame(tick);
-      this._tickCore();
+      if (this._scheduler) {
+        const gate = this._scheduler.checkRenderDue();
+        if (gate.isDue) {
+          this._tickCore();
+        }
+      } else {
+        this._tickCore();
+      }
     };
 
     tick();

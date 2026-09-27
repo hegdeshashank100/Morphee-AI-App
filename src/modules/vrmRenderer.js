@@ -139,6 +139,10 @@ export class VrmRenderer {
     this.stageManager.stopRenderLoop();
   }
 
+  setScheduler(scheduler) {
+    this.stageManager.setScheduler(scheduler);
+  }
+
   /**
    * Diagnostic WebGL memory introspection for testing.
    */

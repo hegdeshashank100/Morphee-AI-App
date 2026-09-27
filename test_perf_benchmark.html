@@ -58,29 +58,28 @@
     </div>
 
     <div class="card">
-      <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #f8fafc;">Hardware Benchmark Matrix</h3>
+      <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #f8fafc;">Hardware Benchmark Matrix — Phase 1 Baseline & Phase 2 Pacing Engine</h3>
       <table id="resultsTable">
         <thead>
           <tr>
             <th>Scenario</th>
             <th>Type</th>
             <th>People</th>
-            <th>Features</th>
-            <th>FPS</th>
-            <th>Frame (Avg)</th>
-            <th>Median</th>
+            <th>Target FPS</th>
+            <th>Render FPS</th>
+            <th>Interval (Avg)</th>
+            <th>P50 (Median)</th>
             <th>P95</th>
-            <th>Worst</th>
+            <th>Skipped</th>
+            <th>Pacing Err</th>
             <th>Face Ms</th>
             <th>Pose Ms</th>
             <th>Hand Ms</th>
-            <th>Avatar Ms</th>
-            <th>SpringBone</th>
             <th>Render Ms</th>
           </tr>
         </thead>
         <tbody id="tableBody">
-          <tr><td colspan="15" style="text-align: center; color: #64748b;">Click "Run Real Hardware Benchmark" to begin...</td></tr>
+          <tr><td colspan="14" style="text-align: center; color: #64748b;">Click "Run Real Hardware Benchmark" to begin...</td></tr>
         </tbody>
       </table>
     </div>
@@ -102,6 +101,7 @@
     import { FrameProfiler } from './src/modules/core/profiler.js';
     import { PerformanceManager } from './src/modules/performance/performanceManager.js';
     import { detectGPU } from './src/modules/gpuDetect.js';
+    import { RenderScheduler } from './src/modules/core/renderScheduler.js';
 
     const stageCanvas = document.getElementById('stageCanvas');
     const feedCanvas = document.getElementById('feedCanvas');
@@ -200,12 +200,23 @@
       log(`AvatarSample_A loaded: ${avatar2.vrm.scene.children.length} root meshes/groups.`);
 
       const scenarios = [
-        { id: '1P_FACE', name: '1P Face Only', type: 'REAL HARDWARE', people: 1, face: true, pose: false, hands: false, frames: 60 },
-        { id: '1P_POSE', name: '1P Face + Pose', type: 'REAL HARDWARE', people: 1, face: true, pose: true, hands: false, frames: 60 },
-        { id: '1P_FULL', name: '1P Full Pipeline', type: 'REAL HARDWARE', people: 1, face: true, pose: true, hands: true, frames: 60 },
-        { id: '2P_FULL', name: '2P Multi-Person', type: 'REAL HARDWARE', people: 2, face: true, pose: true, hands: true, frames: 60 },
-        { id: '4P_STRESS', name: '4P Multi-Person', type: 'UNTESTED', people: 4, face: true, pose: true, hands: true, frames: 0 },
-        { id: '8P_MAX', name: '8P Multi-Person', type: 'UNTESTED', people: 8, face: true, pose: true, hands: true, frames: 0 }
+        // Phase 1 Baseline Reference Scenarios (60 FPS Uncapped target)
+        { id: '1P_FACE', name: '1P Face Only (Baseline)', type: 'REAL HARDWARE', people: 1, face: true, pose: false, hands: false, targetFps: 60, frames: 35 },
+        { id: '1P_POSE', name: '1P Face + Pose (Baseline)', type: 'REAL HARDWARE', people: 1, face: true, pose: true, hands: false, targetFps: 60, frames: 35 },
+        { id: '1P_FULL', name: '1P Full Pipeline (Baseline)', type: 'REAL HARDWARE', people: 1, face: true, pose: true, hands: true, targetFps: 60, frames: 35 },
+        { id: '2P_FULL', name: '2P Multi-Person (Baseline)', type: 'REAL HARDWARE', people: 2, face: true, pose: true, hands: true, targetFps: 60, frames: 35 },
+
+        // Phase 2 Configured Pacing Scenarios
+        { id: '1P_30FPS', name: '1P Full Pipeline @ 30 FPS', type: 'REAL HARDWARE', people: 1, face: true, pose: true, hands: true, targetFps: 30, frames: 35 },
+        { id: '1P_45FPS', name: '1P Full Pipeline @ 45 FPS', type: 'REAL HARDWARE', people: 1, face: true, pose: true, hands: true, targetFps: 45, frames: 35 },
+        { id: '1P_60FPS', name: '1P Full Pipeline @ 60 FPS', type: 'REAL HARDWARE', people: 1, face: true, pose: true, hands: true, targetFps: 60, frames: 35 },
+        { id: '2P_30FPS', name: '2P Multi-Person @ 30 FPS', type: 'REAL HARDWARE', people: 2, face: true, pose: true, hands: true, targetFps: 30, frames: 35 },
+        { id: '2P_45FPS', name: '2P Multi-Person @ 45 FPS', type: 'REAL HARDWARE', people: 2, face: true, pose: true, hands: true, targetFps: 45, frames: 35 },
+        { id: '2P_60FPS', name: '2P Multi-Person @ 60 FPS', type: 'REAL HARDWARE', people: 2, face: true, pose: true, hands: true, targetFps: 60, frames: 35 },
+
+        // Untested Scenarios (Physical Humans Requirement)
+        { id: '4P_STRESS', name: '4P Multi-Person @ 60 FPS', type: 'UNTESTED', people: 4, face: true, pose: true, hands: true, targetFps: 60, frames: 0 },
+        { id: '8P_MAX', name: '8P Multi-Person @ 60 FPS', type: 'UNTESTED', people: 8, face: true, pose: true, hands: true, targetFps: 60, frames: 0 }
       ];
 
       const results = {};
@@ -215,7 +226,7 @@
           log(`Skipping ${sc.name} — Labeled UNTESTED as required (No 4-8 physical humans in live feed).`);
           results[sc.id] = {
             status: 'UNTESTED',
-            reason: 'Requires live multi-person camera feed; simulation strictly prohibited in Phase 1.'
+            reason: 'Requires live multi-person camera feed; simulation strictly prohibited in Phase 1 & 2.'
           };
 
           const row = document.createElement('tr');
@@ -223,8 +234,8 @@
             <td><strong>${sc.name}</strong></td>
             <td><span class="badge badge-untested">UNTESTED</span></td>
             <td>${sc.people}P</td>
-            <td>Full Pipeline</td>
-            <td colspan="11" style="text-align: center; color: #eab308; font-style: italic;">
+            <td>${sc.targetFps}</td>
+            <td colspan="10" style="text-align: center; color: #eab308; font-style: italic;">
               Untested on live hardware (Requires 4+ physical people in camera feed; not simulated)
             </td>
           `;
@@ -236,6 +247,7 @@
         const profiler = new FrameProfiler(sc.frames);
         const personTracker = new PersonTracker({ maxPeople: sc.people });
         const assignmentManager = new AvatarAssignmentManager();
+        const scheduler = new RenderScheduler({ targetFps: sc.targetFps });
 
         // Stage setup
         stageManager.trackAvatars.clear();
@@ -247,8 +259,9 @@
 
         renderRealisticFeedFrame(feedCtx, sc.people);
 
-        // Run real hardware frames
+        // Run real hardware frames paced by RAF
         for (let frame = 0; frame < sc.frames; frame++) {
+          await new Promise(r => requestAnimationFrame(r));
           const now = performance.now();
           profiler.startFrame();
 
@@ -275,50 +288,63 @@
             handInferMs = bodyResult.handInferMs || 0;
           }
 
-          // 3. Real PersonTracker Correlation
+          // 3. Real PersonTracker Correlation (runs every frame)
           const tTrack0 = performance.now();
           const trackOutput = personTracker.update(faceResult, bodyResult, now);
           const trackedPersons = trackOutput.trackedPersons;
           const trackingMs = performance.now() - tTrack0;
 
-          // 4. Real Avatar Assignment & Stage Positioning
+          // 4. Real Avatar Assignment (runs every frame)
           const tAssign0 = performance.now();
           assignmentManager.sync(trackedPersons);
           const assignmentMs = performance.now() - tAssign0;
 
-          const tFrame0 = performance.now();
-          stageManager.updateTrackPositions(trackedPersons, sc.people > 1 ? 'multi' : 'single');
-          const framingMs = performance.now() - tFrame0;
+          // 5. Pacing gate
+          const gate = scheduler.checkRenderDue(now);
+          let framingMs = 0;
+          let avatarUpdateMs = 0;
+          let renderMs = 0;
+          let physicsMs = 0;
 
-          // 5. Real Avatar Kinematics Retargeting
-          const tAvatar0 = performance.now();
-          if (trackedPersons.length > 0) {
-            for (const p of trackedPersons) {
-              const av = stageManager.getAvatarForTrack(p.trackId);
-              if (av && av.isLoaded) {
-                if (p.face) av.updateFace(p.face, { smoothingAlpha: 0.45, headPoseEnabled: true });
-                if (p.pose) av.updatePose(p.pose, { alpha: 0.45 });
-                if (p.hands && p.hands.length) {
-                  av.applyHands(p.hands, p.pose?.landmarks, p.pose?.worldLandmarks, 0.45);
+          if (gate.isDue) {
+            const tFrame0 = performance.now();
+            stageManager.updateTrackPositions(trackedPersons, sc.people > 1 ? 'multi' : 'single');
+            framingMs = performance.now() - tFrame0;
+
+            const tAvatar0 = performance.now();
+            if (trackedPersons.length > 0) {
+              for (const p of trackedPersons) {
+                const av = stageManager.getAvatarForTrack(p.trackId);
+                if (av && av.isLoaded) {
+                  if (p.face) av.updateFace(p.face, { smoothingAlpha: 0.45, headPoseEnabled: true });
+                  if (p.pose) av.updatePose(p.pose, { alpha: 0.45 });
+                  if (p.hands && p.hands.length) {
+                    av.applyHands(p.hands, p.pose?.landmarks, p.pose?.worldLandmarks, 0.45);
+                  }
                 }
               }
+            } else {
+              avatar1.applyBlendshapes([{ categoryName: 'mouthSmileLeft', score: 0.3 }], 0.45);
+              if (sc.people >= 2) {
+                avatar2.applyBlendshapes([{ categoryName: 'mouthSmileRight', score: 0.3 }], 0.45);
+              }
             }
-          } else {
-            // Apply neutral retargeting to ensure bones and blendshapes evaluate
-            avatar1.applyBlendshapes([{ categoryName: 'mouthSmileLeft', score: 0.3 }], 0.45);
-            if (sc.people >= 2) {
-              avatar2.applyBlendshapes([{ categoryName: 'mouthSmileRight', score: 0.3 }], 0.45);
-            }
-          }
-          const avatarUpdateMs = performance.now() - tAvatar0;
+            avatarUpdateMs = performance.now() - tAvatar0;
 
-          // 6. Real VRM Spring Bone Physics + Real Three.js WebGL Render Pass
-          stageManager.tickOnce();
-          const renderMs = stageManager.lastRenderMs || 0;
-          const physicsMs = stageManager.lastPhysicsMs || 0;
+            stageManager.tickOnce();
+            renderMs = stageManager.lastRenderMs || 0;
+            physicsMs = stageManager.lastPhysicsMs || 0;
+          }
+
           const totalFrameMs = performance.now() - now;
 
           profiler.recordFrame({
+            targetFps: sc.targetFps,
+            rafFrequencyHz: scheduler.getTelemetry().rafFrequencyHz,
+            schedulerSkippedFrames: scheduler.skippedFrames,
+            schedulerRenderedFrames: scheduler.renderedFrames,
+            pacingErrorMs: gate.pacingErrorMs,
+            frameIntervalMs: gate.isDue ? gate.renderDeltaMs : 16.67,
             faceMs: faceInferMs,
             poseMs: poseInferMs,
             handsMs: handInferMs,
@@ -330,33 +356,27 @@
             renderMs,
             totalFrameMs
           });
-
-          // Yield periodically to allow WebGL frame presentation
-          if (frame % 5 === 0) {
-            await new Promise(r => setTimeout(r, 0));
-          }
         }
 
         const summary = profiler.getSummary();
         results[sc.id] = summary;
-        log(`${sc.name}: Achieved FPS: ${summary.fps}, Total Frame: ${summary.stats.totalFrameMs.avg}ms (P95: ${summary.stats.totalFrameMs.p95}ms, Worst: ${summary.stats.totalFrameMs.worst}ms)`);
+        log(`${sc.name}: Target: ${sc.targetFps}, Achieved Render FPS: ${summary.fps}, Skipped: ${summary.scheduler.skipped}, Total Frame: ${summary.stats.totalFrameMs.avg}ms (P95: ${summary.stats.totalFrameMs.p95}ms)`);
 
         const row = document.createElement('tr');
         row.innerHTML = `
           <td><strong>${sc.name}</strong></td>
           <td><span class="badge badge-pass">${sc.type}</span></td>
           <td>${sc.people}P</td>
-          <td>${sc.face ? 'Face ' : ''}${sc.pose ? '+ Pose ' : ''}${sc.hands ? '+ Hands' : ''}</td>
+          <td>${sc.targetFps}</td>
           <td><strong style="color: #4ade80;">${summary.fps} FPS</strong></td>
-          <td>${summary.stats.totalFrameMs.avg.toFixed(1)} ms</td>
-          <td>${summary.stats.totalFrameMs.median.toFixed(1)} ms</td>
-          <td>${summary.stats.totalFrameMs.p95.toFixed(1)} ms</td>
-          <td>${summary.stats.totalFrameMs.worst.toFixed(1)} ms</td>
+          <td>${summary.stats.frameIntervalMs.avg.toFixed(1)} ms</td>
+          <td>${summary.stats.frameIntervalMs.median.toFixed(1)} ms</td>
+          <td>${summary.stats.frameIntervalMs.p95.toFixed(1)} ms</td>
+          <td>${summary.scheduler.skipped} (${summary.scheduler.skipRatio}%)</td>
+          <td>${summary.stats.pacingErrorMs.avg.toFixed(2)} ms</td>
           <td>${summary.stats.faceMs.avg.toFixed(1)} ms</td>
           <td>${summary.stats.poseMs.avg.toFixed(1)} ms</td>
           <td>${summary.stats.handsMs.avg.toFixed(1)} ms</td>
-          <td>${summary.stats.avatarUpdateMs.avg.toFixed(1)} ms</td>
-          <td>${summary.stats.physicsMs.avg.toFixed(1)} ms</td>
           <td>${summary.stats.renderMs.avg.toFixed(1)} ms</td>
         `;
         tableBody.appendChild(row);

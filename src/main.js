@@ -122,6 +122,7 @@ import { avatarPreviewGenerator } from './modules/library/avatarPreviewGenerator
 import { avatarAssignmentManager } from './modules/tracking/avatarAssignmentManager.js';
 import { performanceManager } from './modules/performance/performanceManager.js';
 import { settingsManager } from './modules/core/settingsManager.js';
+import { renderScheduler } from './modules/core/renderScheduler.js';
 import { MultiPersonHUD, TRACK_COLORS, getTrackColor } from './modules/ui/multiPersonHud.js';
 import { CameraNavigator } from './modules/ui/cameraNavigator.js';
 import { cameraState } from './modules/ui/cameraState.js';
@@ -255,6 +256,7 @@ if (typeof window !== 'undefined') {
   window.__morpheeAssignment = avatarAssignmentManager;
   window.__morpheePerformance = performanceManager;
   window.__morpheeSettings = settingsManager;
+  window.__morpheeScheduler = renderScheduler;
   window.__multiPersonHud = multiPersonHud;
   window.__morpheeCameraNav = cameraNavigator;
   window.__morpheeCameraState = cameraState;
@@ -266,8 +268,12 @@ if (typeof window !== 'undefined') {
 // 1. Establish two-way binding between UI elements and settingsManager
 settingsManager.bindUI(document);
 
-// 2. Synchronize PerformanceManager with initial settings
-performanceManager.setTargetFps(settingsManager.get('targetFps'));
+// 2. Synchronize PerformanceManager & RenderScheduler with initial settings
+const initialTargetFps = settingsManager.get('targetFps');
+performanceManager.setTargetFps(initialTargetFps);
+renderScheduler.setTargetFps(initialTargetFps);
+faceRenderer.setScheduler(renderScheduler);
+
 performanceManager.setMode(settingsManager.get('performanceProfile'));
 performanceManager.setUserPixelRatio(settingsManager.get('pixelRatio'));
 faceRenderer.setPixelRatio(performanceManager.getEffectivePixelRatio());
@@ -276,6 +282,7 @@ faceRenderer.setAntialiasing(settingsManager.get('antiAliasing'));
 // 3. Subscribe subsystems to authoritative settings changes
 settingsManager.on('targetFps', (val) => {
   performanceManager.setTargetFps(val);
+  renderScheduler.setTargetFps(val);
 });
 
 settingsManager.on('performanceProfile', (val) => {
@@ -930,88 +937,116 @@ function loop() {
     }
   }
 
-  // Update multi-avatar horizontal stage positioning and dynamic auto-fit framing
-  const tFrame0 = performance.now();
-  faceRenderer.stageManager.updateTrackPositions(trackedPersons, trackingMode);
-  const framingMs = performance.now() - tFrame0;
-  const trackingMs = performance.now() - tTrack0;
+  // 5. Render Scheduler Gate: Determines whether 3D/2D rendering is due for the configured target FPS
+  const renderGate = renderScheduler.checkRenderDue(now);
+  let framingMs = 0;
+  let avatarUpdateMs = 0;
+  let renderPassMs = 0;
+  let physicsMs = 0;
 
-  // 5. Draw 2D canvas telemetry & update status pills
-  if (activePersons.length > 0) {
-    drawLandmarksSparse(activePersons);
-    if (activePersons.length === 1) {
-      const p = activePersons[0];
-      const avId = avatarAssignmentManager.getAvatarIdForTrack(p.trackId);
-      const avName = avId ? (avatarRegistry.get(avId)?.name || avId) : 'No Unique Avatar';
-      facePill.textContent = `Track #${p.trackId} (${avName})`;
-    } else {
-      const badges = activePersons.map(p => {
+  if (renderGate.isDue) {
+    // Update multi-avatar horizontal stage positioning and dynamic auto-fit framing
+    const tFrame0 = performance.now();
+    faceRenderer.stageManager.updateTrackPositions(trackedPersons, trackingMode);
+    framingMs = performance.now() - tFrame0;
+
+    // Draw 2D canvas telemetry & update status pills
+    if (activePersons.length > 0) {
+      drawLandmarksSparse(activePersons);
+      if (activePersons.length === 1) {
+        const p = activePersons[0];
         const avId = avatarAssignmentManager.getAvatarIdForTrack(p.trackId);
-        const avName = avId ? (avatarRegistry.get(avId)?.name || avId) : 'No Avatar';
-        return `#${p.trackId}:${avName}`;
-      }).join(' · ');
-      facePill.textContent = `${activePersons.length} tracks (${badges})`;
+        const avName = avId ? (avatarRegistry.get(avId)?.name || avId) : 'No Unique Avatar';
+        facePill.textContent = `Track #${p.trackId} (${avName})`;
+      } else {
+        const badges = activePersons.map(p => {
+          const avId = avatarAssignmentManager.getAvatarIdForTrack(p.trackId);
+          const avName = avId ? (avatarRegistry.get(avId)?.name || avId) : 'No Avatar';
+          return `#${p.trackId}:${avName}`;
+        }).join(' · ');
+        facePill.textContent = `${activePersons.length} tracks (${badges})`;
+      }
+    } else {
+      ctx.clearRect(0, 0, overlay.width, overlay.height);
+      facePill.textContent = 'no face';
     }
-  } else {
-    ctx.clearRect(0, 0, overlay.width, overlay.height);
-    facePill.textContent = 'no face';
+
+    // Apply tracked data to each AvatarInstance independently by TrackID
+    const tAvatar0 = performance.now();
+    const primary = activePersons[0] || trackedPersons[0];
+    for (const person of trackedPersons) {
+      if (person.state === 'TERMINATED') continue;
+      if (trackingMode === 'single' && person !== primary) continue;
+
+      const avatar = faceRenderer.stageManager.getAvatarForTrack(person.trackId);
+      if (!avatar || !avatar.isLoaded) continue;
+
+      if (person.state === 'COASTING') {
+        // Coasting: keep avatar visible, hold pose gracefully
+        continue;
+      }
+
+      // Apply face tracking
+      if (person.face) {
+        avatar.updateFace(person.face, {
+          smoothingAlpha: alpha,
+          headPoseEnabled
+        });
+      }
+
+      // Apply body / arm tracking
+      if (bodyTracking && person.pose && person.pose.worldLandmarks?.length) {
+        avatar.updatePose(person.pose, { alpha });
+      }
+
+      // Apply hands tracking (strictly isolated to this physical person's hands)
+      if (handTracking && person.hands && person.hands.length > 0) {
+        avatar.applyHands(
+          person.hands,
+          person.pose ? person.pose.landmarks : null,
+          person.pose ? person.pose.worldLandmarks : null,
+          alpha
+        );
+      }
+    }
+    avatarUpdateMs = performance.now() - tAvatar0;
+
+    // Update primary avatar expression UI coefficients & head pose telemetry
+    if (primary && primary.face) {
+      if (primary.face.blendshapes && primary.face.blendshapes.length) {
+        updateBlendshapeUI(primary.face.blendshapes);
+      }
+      if (primary.face.transformationMatrix && primary.face.transformationMatrix.length) {
+        const m = primary.face.transformationMatrix;
+        const yaw = Math.atan2(-m[8], m[0]) * (180 / Math.PI);
+        const pitch = Math.atan2(m[9], m[10]) * (180 / Math.PI);
+        mPose.textContent = `${yaw.toFixed(1)}° / ${pitch.toFixed(1)}°`;
+      }
+    } else {
+      mPose.textContent = '--';
+    }
+
+    // Real-time Multi-Person Stage HUD update
+    multiPersonHud.update(trackedPersons, avatarAssignmentManager, {
+      trackingMode,
+      maxPeople: settingsManager.get('maxPeople'),
+      bodyTracking: settingsManager.get('bodyTracking'),
+      handTracking: settingsManager.get('handTracking'),
+      isHandSkipped: bodyResult.isHandSkipped === true,
+      telemetry: performanceManager.getTelemetry(),
+      selectedTrackId
+    });
+
+    // Update 3D Floating Stage Labels over active avatars
+    updateAvatarStageLabels(trackedPersons, trackingMode);
+
+    // Single unified render tick — renders Three.js WebGL scene & spring-bones
+    faceRenderer.stageManager.tickOnce();
+    renderPassMs = faceRenderer.stageManager?.lastRenderMs || 0;
+    physicsMs = faceRenderer.stageManager?.lastPhysicsMs || 0;
   }
 
-  // 6. Apply tracked data to each AvatarInstance independently by TrackID
-  const tAvatar0 = performance.now();
-  const primary = activePersons[0] || trackedPersons[0];
-  for (const person of trackedPersons) {
-    if (person.state === 'TERMINATED') continue;
-    if (trackingMode === 'single' && person !== primary) continue;
-
-    const avatar = faceRenderer.stageManager.getAvatarForTrack(person.trackId);
-    if (!avatar || !avatar.isLoaded) continue;
-
-    if (person.state === 'COASTING') {
-      // Coasting: keep avatar visible, hold pose gracefully
-      continue;
-    }
-
-    // Apply face tracking
-    if (person.face) {
-      avatar.updateFace(person.face, {
-        smoothingAlpha: alpha,
-        headPoseEnabled
-      });
-    }
-
-    // Apply body / arm tracking
-    if (bodyTracking && person.pose && person.pose.worldLandmarks?.length) {
-      avatar.updatePose(person.pose, { alpha });
-    }
-
-    // Apply hands tracking (strictly isolated to this physical person's hands)
-    if (handTracking && person.hands && person.hands.length > 0) {
-      avatar.applyHands(
-        person.hands,
-        person.pose ? person.pose.landmarks : null,
-        person.pose ? person.pose.worldLandmarks : null,
-        alpha
-      );
-    }
-  }
-  const avatarUpdateMs = performance.now() - tAvatar0;
-
-  // Update primary avatar expression UI coefficients & head pose telemetry
-  if (primary && primary.face) {
-    if (primary.face.blendshapes && primary.face.blendshapes.length) {
-      updateBlendshapeUI(primary.face.blendshapes);
-    }
-    if (primary.face.transformationMatrix && primary.face.transformationMatrix.length) {
-      const m = primary.face.transformationMatrix;
-      const yaw = Math.atan2(-m[8], m[0]) * (180 / Math.PI);
-      const pitch = Math.atan2(m[9], m[10]) * (180 / Math.PI);
-      mPose.textContent = `${yaw.toFixed(1)}° / ${pitch.toFixed(1)}°`;
-    }
-  } else {
-    mPose.textContent = '--';
-  }
-
+  const trackingMs = performance.now() - tTrack0;
   const handCount = bodyResult.handCount || 0;
   const isHandSkipped = bodyResult.isHandSkipped === true;
   let handStatusText;
@@ -1025,10 +1060,13 @@ function loop() {
 
   mBody.textContent = `${bodyResult.poseCount} pose${bodyResult.poseCount === 1 ? '' : 's'} · ${handStatusText}`;
 
-  // 7. Record performance metrics in PerformanceManager
+  // Record performance metrics in PerformanceManager
+  const schedTelem = renderScheduler.getTelemetry();
   const instFps = dtFrame > 0 ? (1000 / dtFrame) : 60;
+  const effectiveFps = schedTelem.renderFps > 0 ? schedTelem.renderFps : instFps;
+
   performanceManager.recordMetrics({
-    fps: instFps,
+    fps: effectiveFps,
     frameTimeMs: dtFrame,
     faceInferMs,
     poseInferMs,
@@ -1036,13 +1074,13 @@ function loop() {
     trackingMs,
     framingMs,
     avatarUpdateMs,
-    renderMs: faceRenderer.stageManager?.lastRenderMs || 0,
+    renderMs: renderPassMs,
     activePeople: activePersons.length,
     activeAvatars: faceRenderer.stageManager.trackAvatars.size,
     timestampMs: now
   });
 
-  // 8. Update performance telemetry in UI (throttled to ~10Hz to prevent DOM layout thrashing)
+  // Update performance telemetry in UI (throttled to ~10Hz to prevent DOM layout thrashing)
   const telem = performanceManager.getTelemetry();
   const totalInferMs = faceInferMs + poseInferMs + handInferMs;
   const shouldUpdateDOM = (now - lastTelemetryUpdateMs >= 100);
@@ -1050,12 +1088,14 @@ function loop() {
   if (shouldUpdateDOM) {
     lastTelemetryUpdateMs = now;
     mInfer.textContent = totalInferMs.toFixed(1) + ' ms';
-    fpsPill.textContent = `${telem.actualFps} FPS`;
+    const displayFps = schedTelem.renderFps > 0 ? schedTelem.renderFps : telem.actualFps;
+    fpsPill.textContent = `${displayFps.toFixed(1)} FPS`;
+    if (mRenderFps) mRenderFps.textContent = displayFps.toFixed(0);
     if (mTier) mTier.textContent = `${telem.mode === 'AUTO' ? 'AUTO · ' : ''}${telem.tier}`;
     if (mTiming) mTiming.textContent = `F:${Math.round(telem.faceInferMs)} P:${Math.round(telem.poseInferMs)} H:${Math.round(telem.handInferMs)}`;
 
-    // Update Performance Status Strip
-    if (stripRenderFps) stripRenderFps.textContent = `${telem.actualFps} FPS`;
+    // Update Performance Status Strip — truthfully distinguish Target FPS and Actual Render FPS
+    if (stripRenderFps) stripRenderFps.textContent = `Target: ${renderScheduler.targetFps} | Render: ${displayFps.toFixed(1)} FPS`;
     if (stripFrameTime) stripFrameTime.textContent = `${telem.frameTimeMs.toFixed(1)} ms`;
     if (stripInference) stripInference.textContent = `${totalInferMs.toFixed(1)} ms`;
     if (stripTier) stripTier.textContent = `${telem.mode === 'AUTO' ? 'AUTO · ' : ''}${telem.tier}`;
@@ -1087,23 +1127,9 @@ function loop() {
       if (dPoseInfer) dPoseInfer.textContent = `${activePoseMs.toFixed(1)} ms`;
       if (dHandInfer) dHandInfer.textContent = `${activeHandMs.toFixed(1)} ms`;
       if (dTrackFrame) dTrackFrame.textContent = `${(trackingMs + framingMs).toFixed(1)} ms`;
-      if (dRenderPass) dRenderPass.textContent = `${(faceRenderer.stageManager?.lastRenderMs || 1.2).toFixed(1)} ms`;
+      if (dRenderPass) dRenderPass.textContent = `${(renderPassMs || 1.2).toFixed(1)} ms`;
     }
   }
-
-  // 9. Phase 11: Real-time Multi-Person Stage HUD update
-  multiPersonHud.update(trackedPersons, avatarAssignmentManager, {
-    trackingMode,
-    maxPeople: settingsManager.get('maxPeople'),
-    bodyTracking: settingsManager.get('bodyTracking'),
-    handTracking: settingsManager.get('handTracking'),
-    isHandSkipped,
-    telemetry: telem,
-    selectedTrackId
-  });
-
-  // Update 3D Floating Stage Labels over active avatars
-  updateAvatarStageLabels(trackedPersons, trackingMode);
 
   // Diagnostics API introspection for testing & automated verification
   if (typeof window !== 'undefined') {
@@ -1121,7 +1147,12 @@ function loop() {
       trackIdSwitches: trackingOutput?.diagnostics?.trackIdSwitches ?? 0,
       avatarIdSwitches: avatarAssignmentManager?.avatarIdSwitches ?? 0,
       inferenceLatencyMs: totalInferMs,
-      renderFps: telem.actualFps,
+      renderFps: schedTelem.renderFps > 0 ? schedTelem.renderFps : telem.actualFps,
+      targetFps: renderScheduler.targetFps,
+      rafFrequencyHz: schedTelem.rafFrequencyHz,
+      schedulerSkippedFrames: renderScheduler.skippedFrames,
+      schedulerRenderedFrames: renderScheduler.renderedFrames,
+      pacingErrorMs: renderGate.pacingErrorMs,
       breakdown: {
         faceInferMs,
         poseInferMs,
@@ -1130,18 +1161,20 @@ function loop() {
         assignmentMs,
         framingMs,
         avatarUpdateMs,
-        renderMs: faceRenderer.stageManager?.lastRenderMs || 0
+        renderMs: renderPassMs
       }
     };
   }
 
-  // Unified single render tick — replaces dual-RAF (ROOT CAUSE #1 FIX)
-  faceRenderer.stageManager.tickOnce();
-
-  // High-Resolution Frame Pipeline Profiler (PHASE 1)
+  // High-Resolution Frame Pipeline Profiler (PHASE 1 & 2)
   const primaryAvInstance = faceRenderer.stageManager.primaryAvatar;
   profiler.recordFrame({
-    frameIntervalMs: dtFrame,
+    targetFps: renderScheduler.targetFps,
+    rafFrequencyHz: schedTelem.rafFrequencyHz,
+    schedulerSkippedFrames: renderScheduler.skippedFrames,
+    schedulerRenderedFrames: renderScheduler.renderedFrames,
+    pacingErrorMs: renderGate.pacingErrorMs,
+    frameIntervalMs: renderGate.isDue ? renderGate.renderDeltaMs : dtFrame,
     faceMs: faceInferMs,
     poseMs: poseInferMs,
     handsMs: handInferMs,
@@ -1151,9 +1184,9 @@ function loop() {
     expressionMs: primaryAvInstance?.lastExpressionMs || 0,
     bodyRetargetMs: primaryAvInstance?.lastBodyRetargetMs || 0,
     handRetargetMs: primaryAvInstance?.lastHandRetargetMs || 0,
-    physicsMs: faceRenderer.stageManager.lastPhysicsMs || 0,
+    physicsMs: physicsMs,
     framingMs: framingMs,
-    renderMs: faceRenderer.stageManager.lastRenderMs || 0,
+    renderMs: renderPassMs,
     totalFrameMs: performance.now() - now
   });
 
